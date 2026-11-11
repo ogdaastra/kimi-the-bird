@@ -594,6 +594,23 @@ class KimiRuntime:
             return "budget_paused"
         return "active"
 
+    def pose(self) -> dict:
+        """A cheap, frequently-polled summary of where Kimi is and what it's doing (for the 3D view)."""
+        with self.lock:
+            w = self.world
+            travel = None
+            if w.travel:
+                a, b, t = w.travel_progress()
+                travel = {"from": a, "to": b, "t": t}
+            return {
+                "location": w.location or w.destination,
+                "travel": travel,
+                "action": w.activity.step.action if w.activity else None,
+                "asleep": w.asleep,
+                "hour": w.env.hour,
+                "weather": w.env.weather,
+            }
+
     def snapshot(self) -> dict:
         with self.lock:
             w = self.world
@@ -641,6 +658,8 @@ class KimiRuntime:
                 "emergency_stopped": s.emergency_stopped,
                 "time_scale": s.time_scale,
                 "displayed_creations": int(self.db.scalar("SELECT COUNT(*) FROM creations WHERE displayed=1", (), 0)),
+                "reduce_motion": s.reduce_motion,
+                "graphics_quality": s.graphics_quality,
             }
 
     # -- persistence -------------------------------------------------------------------------

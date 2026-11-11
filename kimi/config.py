@@ -131,6 +131,8 @@ class Settings:
     # --- Appearance -----------------------------------------------------
     ui_theme: str = "system"             # system | light | dark
     reduce_motion: bool = False
+    world_view: str = "3d"               # 3d | map
+    graphics_quality: str = "high"       # high (shadows, antialiasing) | low
 
 
 _RANGES: dict[str, tuple[float, float]] = {
@@ -180,6 +182,10 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
     if name in ("decision_effort", "reflection_effort") and value not in EFFORT_LEVELS:
         value = default
     if name == "ui_theme" and value not in ("system", "light", "dark"):
+        value = default
+    if name == "world_view" and value not in ("3d", "map"):
+        value = default
+    if name == "graphics_quality" and value not in ("high", "low"):
         value = default
     return value
 

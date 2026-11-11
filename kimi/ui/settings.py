@@ -67,6 +67,7 @@ def _dspin(lo: float, hi: float, decimals: int, step: float, prefix: str = "", s
 class SettingsPage(QWidget):
     theme_changed = Signal(str)
     motion_changed = Signal(bool)
+    world_view_changed = Signal(str)
 
     def __init__(self, runtime, parent: QWidget | None = None, *, mock: bool = False) -> None:
         super().__init__(parent)
@@ -217,6 +218,16 @@ class SettingsPage(QWidget):
         self.theme_box.addItem("Lantern night (dark)", "dark")
         self.theme_box.setMaximumWidth(220)
         f.addRow("Theme", self.theme_box)
+        self.world_view = QComboBox()
+        self.world_view.addItem("3D world", "3d")
+        self.world_view.addItem("Illustrated map", "map")
+        self.world_view.setMaximumWidth(220)
+        f.addRow("World screen shows", self.world_view)
+        self.quality = QComboBox()
+        self.quality.addItem("High (shadows, smooth edges)", "high")
+        self.quality.addItem("Low (faster on older computers)", "low")
+        self.quality.setMaximumWidth(260)
+        f.addRow("3D quality", self.quality)
         look.add(w)
         self.reduce_motion = QCheckBox("Reduce motion (no hopping, rain or twinkling)")
         look.add(self.reduce_motion)
@@ -284,6 +295,8 @@ class SettingsPage(QWidget):
         idx = self.theme_box.findData(s.ui_theme)
         self.theme_box.setCurrentIndex(max(0, idx))
         self.reduce_motion.setChecked(s.reduce_motion)
+        self.world_view.setCurrentIndex(max(0, self.world_view.findData(s.world_view)))
+        self.quality.setCurrentIndex(max(0, self.quality.findData(s.graphics_quality)))
         self.applied.setText("")
         self.refresh()
 
@@ -318,7 +331,11 @@ class SettingsPage(QWidget):
             github_remote_url=github,
             ui_theme=self.theme_box.currentData(),
             reduce_motion=self.reduce_motion.isChecked(),
+            world_view=self.world_view.currentData(),
+            graphics_quality=self.quality.currentData(),
         )
+        if s.world_view != before.world_view:
+            self.world_view_changed.emit(s.world_view)
         if s.ui_theme != before.ui_theme:
             self.theme_changed.emit(s.ui_theme)
         if s.reduce_motion != before.reduce_motion:

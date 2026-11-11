@@ -97,11 +97,12 @@ class MainWindow(QMainWindow):
         body.addWidget(self.nav)
 
         self.stack = QStackedWidget()
-        self.world_page = WorldPage()
+        self.world_page = WorldPage(self.rt, mode=self.rt.settings.get().world_view)
         self.world_page.dismiss_btn.clicked.connect(self.rt.dismiss_highlight)
         self.settings_page = SettingsPage(self.rt, mock=mock)
         self.settings_page.theme_changed.connect(self._apply_theme)
         self.settings_page.motion_changed.connect(self.world_page.canvas.set_reduce_motion)
+        self.settings_page.world_view_changed.connect(self.world_page.set_mode)
         self.pages = [
             self.world_page,
             CharacterPage(self.rt),

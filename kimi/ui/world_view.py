@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QSizePolicy,
+    QStackedWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -509,10 +510,13 @@ class WorldCanvas(QWidget):
 
 
 class WorldPage(QWidget):
-    """Map on the left, Kimi's status on the right."""
+    """The 3D world (or illustrated map) on the left, Kimi's status on the right."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, runtime=None, parent: QWidget | None = None, *, mode: str = "3d") -> None:
         super().__init__(parent)
+        self.rt = runtime
+        self.view3d = None
+        self.view3d_error = ""
         self.setObjectName("Page")
         outer = QHBoxLayout(self)
         outer.setContentsMargins(16, 16, 16, 16)
@@ -531,8 +535,24 @@ class WorldPage(QWidget):
         bl.addWidget(self.dismiss_btn)
         self.banner.hide()
         left.addWidget(self.banner)
+
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(6)
+        self.btn_3d = button("3D world", tooltip="Explore Bramblewick in 3D")
+        self.btn_map = button("Map", tooltip="The illustrated map (lighter on older computers)")
+        for b in (self.btn_3d, self.btn_map):
+            b.setCheckable(True)
+            toggle_row.addWidget(b)
+        self.view_note = label("", role="caption", muted=True)
+        toggle_row.addWidget(self.view_note, 1)
+        left.addLayout(toggle_row)
+        self.btn_3d.clicked.connect(lambda: self.set_mode("3d"))
+        self.btn_map.clicked.connect(lambda: self.set_mode("map"))
+
+        self.stack = QStackedWidget()
         self.canvas = WorldCanvas()
-        left.addWidget(self.canvas, 1)
+        self.stack.addWidget(self.canvas)
+        left.addWidget(self.stack, 1)
         outer.addLayout(left, 1)
 
         side = QVBoxLayout()
@@ -590,9 +610,50 @@ class WorldPage(QWidget):
         side_w.setFixedWidth(340)
         outer.addWidget(side_w)
         self._last_event_id = None
+        self.mode = "map"
+        self.set_mode(mode)
+
+    # -- 3D / map -------------------------------------------------------------------
+    def _ensure_3d(self) -> bool:
+        if self.view3d is not None:
+            return self.view3d.ok
+        if self.view3d_error:
+            return False
+        try:
+            from .world3d.view import World3DView
+        except Exception as exc:  # noqa: BLE001 - Qt Quick 3D missing or unloadable
+            self.view3d_error = f"3D isn't available here ({type(exc).__name__})."
+            return False
+        self.view3d = World3DView(self.rt)
+        self.view3d.failed.connect(self._on_3d_failed)
+        self.stack.addWidget(self.view3d)
+        if not self.view3d.ok:
+            self.view3d_error = "The 3D scene couldn't be loaded on this computer."
+            return False
+        return True
+
+    def _on_3d_failed(self, reason: str) -> None:
+        self.view3d_error = "3D isn't working on this computer, so here's the map instead."
+        if self.mode == "3d":
+            self.set_mode("map")
+
+    def set_mode(self, mode: str) -> None:
+        if mode == "3d" and not self._ensure_3d():
+            mode = "map"
+        self.mode = mode
+        self.stack.setCurrentWidget(self.view3d if mode == "3d" else self.canvas)
+        self.btn_3d.setChecked(mode == "3d")
+        self.btn_map.setChecked(mode == "map")
+        self.btn_3d.setEnabled(not self.view3d_error)
+        if self.view3d_error:
+            self.btn_3d.setToolTip(self.view3d_error)
+        self.view_note.setText(self.view3d_error if mode == "map" and self.view3d_error else "")
 
     def update_from(self, s: dict) -> None:
         self.canvas.set_snapshot(s)
+        if self.view3d is not None and self.view3d.ok:
+            self.view3d.set_preferences(s.get("graphics_quality", "high"), bool(s.get("reduce_motion")))
+            self.view3d.set_snapshot(s)
         self.place.setText(s["place_name"] if not s.get("travel") else "On the path")
         act = s["activity"]
         self.activity.setText(act[0].upper() + act[1:] if act else "")

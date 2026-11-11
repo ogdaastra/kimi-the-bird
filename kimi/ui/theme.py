@@ -134,6 +134,7 @@ def stylesheet(t: Tokens) -> str:
     QPushButton:hover {{ border-color: {t.accent}; }}
     QPushButton:focus {{ border: 2px solid {t.accent}; }}
     QPushButton:disabled {{ color: {t.ink_muted}; background: {t.surface}; border-color: {t.outline}; }}
+    QPushButton:checked {{ background: {t.accent_soft}; border: 2px solid {t.accent}; }}
     QPushButton[role="primary"] {{ background: {t.accent}; color: {t.text_on_accent}; border: 1px solid {t.accent}; font-weight: 600; }}
     QPushButton[role="primary"]:hover {{ background: {t.accent_hover}; }}
     QPushButton[role="primary"]:focus {{ border: 2px solid {t.ink}; }}

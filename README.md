@@ -1,7 +1,8 @@
 # Kimi 🐦
 
 Kimi is a small autonomous digital bird who lives in **Bramblewick**, a tiny
-storybook town on your Windows computer. Kimi has its own personality,
+storybook island town on your Windows computer, which you can watch and
+explore in **3D**. Kimi has its own personality,
 needs, memories, interests and routines. It wanders between the Nest, the
 Shrub, the Shrine, the Cafe, the Print Shop and the Library. It finds
 things, researches what it's curious about, makes drawings and stories,
@@ -13,13 +14,16 @@ official Anthropic Python SDK, using your own API key. Everything else, such
 as walking, hunger, weather, day and night, and simple habits, is simulated
 locally for free, so API usage stays very low.
 
-![Kimi's world](docs/screenshots/world.png)
+![Bramblewick in 3D](docs/screenshots/world3d-town.png)
+
+![Kimi's world screen](docs/screenshots/world.png)
 
 | | |
 |---|---|
-| ![Night in Bramblewick (dark theme)](docs/screenshots/world-night-dark.png) | ![Character](docs/screenshots/character.png) |
-| ![Creations](docs/screenshots/creations.png) | ![Visitor board (dark theme)](docs/screenshots/visitors-dark.png) |
-| ![Activity log and approvals](docs/screenshots/activity.png) | ![First-launch setup](docs/screenshots/setup.png) |
+| ![Snowy night in 3D](docs/screenshots/world3d-snowy-night.png) | ![Kimi asleep at the Nest](docs/screenshots/world3d-sleeping.png) |
+| ![Kimi at the Print Shop easel](docs/screenshots/world3d-easel.png) | ![Illustrated map view](docs/screenshots/map.png) |
+| ![Character](docs/screenshots/character.png) | ![Creations](docs/screenshots/creations.png) |
+| ![Visitor board (dark theme)](docs/screenshots/visitors-dark.png) | ![Activity log and approvals](docs/screenshots/activity.png) |
 
 ---
 
@@ -229,6 +233,58 @@ mirrored to `data/diary/day-NNNN.md`.
 
 ---
 
+## The 3D world
+
+The **World** screen opens on a real-time 3D Bramblewick, a small low-poly
+island town that Kimi walks around in:
+
+- **Kimi in 3D.** A round slate-blue wren with a peach chest and a cocked
+  tail. It hops along the paths and turns to face where it's going. It pecks
+  when eating or poking around the Shrub, cranes its head to look around
+  when observing, nods over books at the Library, flaps at the Print Shop
+  easel, and tucks in at the Nest to sleep with a little "z z Z". When it's
+  exploring or pottering, it wanders around the place on its own.
+- **A living town.** The Nest oak, the berry-covered Shrub, the Shrine with
+  its notice board (each unread visitor note appears as a paper pinned to
+  it), the Town Square fountain, Marigold's Cafe with a smoking chimney and
+  parasols, the Print Shop easel (Kimi's displayed creations appear on and
+  beside it) and the domed Library. There are also village cottages,
+  lamp-lit paths, a lily pond, wooded hills and the lake around the island.
+  Marigold the hedgehog, Professor Quill the owl and Ink the cat are out
+  during the day.
+- **Time and weather.** The sun moves across the sky and its light and
+  shadows change through dawn, day, dusk and night. At night the stars and
+  moon come out, the windows and lanterns glow, and fireflies drift around
+  the Shrub. Rain, drizzle, snow, fog and clouds follow the simulated
+  weather.
+- **Camera.**
+  - **Follow Kimi** (the default) keeps Kimi in view. It frames each place
+    from its plaza side and swings in behind Kimi when it walks.
+  - **Whole town** gives a slowly turning overview.
+  - **Drag** to look around, **scroll** to zoom, and **click a place name**
+    to fly there. **Double-click** to go back to following Kimi.
+  - Keyboard users can tab through the place names and camera buttons.
+- **Settings → Appearance** lets you choose *3D world* or the *Illustrated
+  map*, set *3D quality* (High has shadows and smooth edges; Low is faster
+  on older PCs) and turn on *Reduce motion*.
+
+How it's built: the static town (terrain, paths, buildings, trees, flowers)
+is generated procedurally in Python (`kimi/world/mesh3d.py`) and merged into
+a handful of flat-shaded, vertex-coloured meshes, so it renders efficiently.
+Everything that moves is a Qt Quick 3D scene (`kimi/ui/qml/`): Kimi,
+townsfolk, sky, light, weather and the camera. The scene only *shows* what
+the simulation decides: Kimi's choices, its walk between places and the
+time of day all come from the same runtime as before, so the 3D view adds
+no API cost.
+
+The 3D view uses your graphics card through Direct3D 11, which every
+Windows 11 PC supports. If 3D can't start, the World screen falls back to
+the illustrated map automatically and tells you why. Kimi, its town and its
+art are original to this project, inspired by the idea of autonomous
+creatures with a world of their own rather than copied from any of them.
+
+---
+
 ## Visitors
 
 You can leave Kimi a note in two ways:
@@ -373,14 +429,16 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-There are 119 tests. They cover API authentication, invalid keys, successful
+There are 141 tests. They cover API authentication, invalid keys, successful
 structured responses, retries and backoff, budget and size limits, memory
 creation, retrieval and consolidation, world movement, needs, day/night,
 visitor note detection and processing, untrusted files and prompt
 injection, action validation and safety, creative output, research access
 rules, the diary, shutdown, crash recovery, the autonomous loop, pause,
 emergency stop and budget behaviour, the end-to-end demo, and UI smoke
-tests. All API calls are mocked, so the tests spend no credits.
+tests. For the 3D world they cover the layout, mesh validity, camera
+corridors, scene state, the QML scene loading cleanly and the fallback to
+the map. All API calls are mocked, so the tests spend no credits.
 
 ## Project structure
 
@@ -396,10 +454,12 @@ kimi/
   ai/        claude_client.py (SDK, retries, budget, usage) · costs.py · prompts.py · decision_engine.py · mock.py
   memory/    database.py · short_term.py · long_term.py · retrieval.py · consolidation.py
   world/     world.py · locations.py · needs.py · environment.py · discoveries.py
+             layout3d.py (3D positions, paths, poses, sky) · mesh3d.py (procedural low-poly town)
   actions/   handler.py · validators.py · creative.py · research.py · sharing.py
   visitors/  inbox.py · board.py
   ui/        app.py · window.py · setup_screen.py · world_view.py · character_view.py · memory_view.py
              diary_view.py · creations_view.py · visitors_view.py · activity_view.py · settings.py · theme.py
+             world3d/ (view.py · bridge.py · geometry.py)  qml/ (World3D.qml, KimiBird.qml, town, sky, weather, overlay)
 tests/       pytest suite (mocked API)
 scripts/     install_windows.bat · start_kimi.bat · start_kimi_headless.bat · demo_visitor_note.py
 docs/        WINDOWS_STARTUP.md · screenshots/
@@ -419,7 +479,9 @@ accident.
   store the key.
 - **Not yet tested on a physical Windows PC or against the live Haiku API.**
   Development and testing were done in a Linux container with headless Qt
-  and a mocked Haiku, because no API key was available there. After setup,
+  and a mocked Haiku, because no API key was available there. The 3D world
+  was rendered and checked there with Mesa's software OpenGL; on Windows it
+  runs on your GPU through Direct3D 11. After setup,
   `python main.py --demo --live` is a quick live check.
 - **Only lives while running.** Time in Bramblewick passes only while Kimi
   is running; it doesn't simulate the hours your PC was off.
@@ -431,6 +493,11 @@ accident.
   the source of truth.
 - **Drawings are simple** procedural SVG compositions chosen by Kimi, not
   generated images.
+- **The 3D world is a view of the simulation.** Kimi's world still has seven
+  places; the cottages, woods and pond are scenery. When Kimi wanders around
+  a place, it doesn't collide with scenery and may poke into a bush.
+- **3D needs a graphics card** that supports Direct3D 11 (or OpenGL on other
+  systems). Without one, Kimi shows the illustrated map instead.
 
 ## Troubleshooting
 
