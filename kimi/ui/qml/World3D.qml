@@ -29,8 +29,15 @@ Item {
 
     function followKimi() {
         cameraMode = "follow"
-        rig.targetDistance = 500
-        rig.targetPitch = 38
+        rig.targetDistance = 270
+        rig.targetPitch = 32
+    }
+
+    function focusCuriosity(c) {
+        focusPoint = Qt.vector3d(c.x, c.y * 0.5, c.z)
+        cameraMode = "place"
+        rig.targetDistance = 260
+        rig.targetPitch = 30
     }
 
     function showTown() {
@@ -49,7 +56,7 @@ Item {
         if (toCamera.length() < 1)
             return
         const hit = view.rayPick(origin, toCamera.normalized())
-        rig.blockedDistance = hit.objectHit && hit.distance < rig.targetDistance ? Math.max(90, hit.distance - 30) : 1e9
+        rig.blockedDistance = hit.objectHit && hit.distance < rig.targetDistance ? Math.max(70, hit.distance - 25) : 1e9
     }
 
     function step(dt) {
@@ -57,7 +64,7 @@ Item {
         kimi.advance(dt)
         let goal
         if (cameraMode === "follow")
-            goal = Qt.vector3d(kimi.x, 28, kimi.z)
+            goal = Qt.vector3d(kimi.x, kimi.y + 14, kimi.z)
         else if (cameraMode === "place")
             goal = focusPoint
         else
@@ -139,6 +146,27 @@ Item {
             id: kimi
             st: root.st
             clock: root.clock
+            groundAt: (gx, gz) => root.bridge.groundHeight(gx, gz)
+        }
+
+        Repeater3D {
+            model: root.lay.beacons
+            delegate: Model {
+                required property var modelData
+                source: "#Sphere"
+                position: Qt.vector3d(modelData.x, modelData.y, modelData.z)
+                scale: Qt.vector3d(0.13, 0.13, 0.13)
+                // long, short, short, long - the lighthouse's undeciphered message
+                readonly property real phase: (root.clock % 6.0)
+                readonly property bool lit: (phase < 1.2) || (phase > 1.6 && phase < 1.9) || (phase > 2.3 && phase < 2.6) || (phase > 3.0 && phase < 4.2)
+                visible: root.st.night > 0.25 && (lit || root.st.reduceMotion)
+                castsShadows: false
+                materials: PrincipledMaterial {
+                    baseColor: "#fff2c0"
+                    emissiveFactor: Qt.vector3d(1.0, 0.85, 0.45).times(2.5)
+                    lighting: PrincipledMaterial.NoLighting
+                }
+            }
         }
 
         Weather {
@@ -164,9 +192,11 @@ Item {
         st: root.st
         lay: root.lay
         cameraMode: root.cameraMode
+        lookAt: root.cameraMode === "follow" ? Qt.vector3d(kimi.x, 0, kimi.z) : root.focusPoint
         onFollowRequested: root.followKimi()
         onTownRequested: root.showTown()
         onPlaceRequested: place => root.focusPlace(place)
+        onCuriosityRequested: c => root.focusCuriosity(c)
     }
 
     FrameAnimation {

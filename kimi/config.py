@@ -100,7 +100,7 @@ class Settings:
     # --- Cost controls --------------------------------------------------
     daily_budget_usd: float = 0.25
     max_requests_per_day: int = 300
-    max_input_tokens: int = 6000         # maximum estimated request size
+    max_input_tokens: int = 10000        # maximum estimated request size
     decision_max_tokens: int = 2000      # maximum response size per call type
     reflection_max_tokens: int = 2500
     research_max_tokens: int = 1200
@@ -118,11 +118,16 @@ class Settings:
     cache_read_multiplier: float = 0.1
     cache_write_5m_multiplier: float = 1.25
     cache_write_1h_multiplier: float = 2.0
+    price_web_search_per_1k: float = 10.0   # Anthropic web search, USD per 1,000 searches
 
     # --- Features -------------------------------------------------------
     research_enabled: bool = True
     research_daily_limit: int = 6
     research_contact: str = ""           # optional contact appended to User-Agent
+    # Wider-web search (Anthropic's server-side web search). Off by default and
+    # gated by extra conditions; see KimiRuntime.web_research_status.
+    web_search_enabled: bool = False
+    web_search_daily_limit: int = 2
     vision_enabled: bool = True
     external_sharing_enabled: bool = False  # drafts only; sending always needs approval
     github_remote_url: str = ""
@@ -157,6 +162,8 @@ _RANGES: dict[str, tuple[float, float]] = {
     "cache_write_5m_multiplier": (0.0, 10.0),
     "cache_write_1h_multiplier": (0.0, 10.0),
     "research_daily_limit": (0, 50),
+    "web_search_daily_limit": (0, 5),
+    "price_web_search_per_1k": (0.0, 1000.0),
     "inbox_poll_s": (1.0, 600.0),
 }
 

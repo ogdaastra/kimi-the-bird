@@ -186,15 +186,36 @@ class SettingsPage(QWidget):
 
         # --- Features ------------------------------------------------------------------
         feat = Card("Features and permissions")
-        self.research = QCheckBox("Research: Kimi may look up subjects on Wikipedia when curious")
+        self.research = QCheckBox("Library research: Kimi may look things up on trusted, free shelves when curious")
         feat.add(self.research)
+        feat.add(label("Shelves: Wikipedia and Simple English Wikipedia, Wiktionary, iNaturalist (nature), NASA's "
+                       "image library (stars), the Art Institute of Chicago (art) and Open Library (books). These are "
+                       "free public APIs - no account, no key, no extra cost - visited politely and rarely.",
+                       role="caption", muted=True))
         w, f = _form()
         self.research_limit = _spin(0, 50, " per day")
         self.research_contact = QLineEdit()
-        self.research_contact.setPlaceholderText("optional, e.g. a website or email for Wikipedia's User-Agent policy")
+        self.research_contact.setPlaceholderText("optional, e.g. a website or email for the User-Agent")
         f.addRow("Research sessions", self.research_limit)
         f.addRow("Contact for User-Agent", self.research_contact)
         feat.add(w)
+        self.web_search = QCheckBox("Let Kimi search the wider web now and then (Anthropic web search - costs extra)")
+        self.web_search.setAccessibleDescription("Off by default. Gated by several conditions listed below.")
+        feat.add(self.web_search)
+        w, f = _form()
+        self.web_limit = _spin(0, 5, " per day")
+        self.web_price = _dspin(0, 1000, 2, 1.0, prefix="$ ", suffix=" per 1,000 searches")
+        f.addRow("Wider-web searches", self.web_limit)
+        f.addRow("Search price (estimate)", self.web_price)
+        feat.add(w)
+        feat.add(label("Kimi only uses the speaking-tube when <b>all</b> of these hold: this box is ticked; the "
+                       "subject is one of Kimi's strong interests <i>and</i> Kimi has already read about it on the "
+                       "trusted shelves; it hasn't used up today's searches; at least three hours have passed since "
+                       "the last one; and today's spending plus the search's worst case stays under half the daily "
+                       "limit. One search per session, never social media or forums. Each search costs about "
+                       "$0.01, plus the result text it reads as input (a fraction of a cent with Haiku 5.5). Whatever "
+                       "Kimi finds is treated as untrusted and the sources are kept in its memory.",
+                       role="caption", muted=True))
         self.vision = QCheckBox("Look at pictures visitors leave (one small request per picture)")
         feat.add(self.vision)
         self.sharing = QCheckBox("Allow Kimi to ask to share creations (each share still needs your approval)")
@@ -289,6 +310,9 @@ class SettingsPage(QWidget):
         self.research.setChecked(s.research_enabled)
         self.research_limit.setValue(s.research_daily_limit)
         self.research_contact.setText(s.research_contact)
+        self.web_search.setChecked(s.web_search_enabled)
+        self.web_limit.setValue(s.web_search_daily_limit)
+        self.web_price.setValue(s.price_web_search_per_1k)
         self.vision.setChecked(s.vision_enabled)
         self.sharing.setChecked(s.external_sharing_enabled)
         self.github.setText(s.github_remote_url)
@@ -326,6 +350,9 @@ class SettingsPage(QWidget):
             research_enabled=self.research.isChecked(),
             research_daily_limit=self.research_limit.value(),
             research_contact=self.research_contact.text().strip(),
+            web_search_enabled=self.web_search.isChecked(),
+            web_search_daily_limit=self.web_limit.value(),
+            price_web_search_per_1k=self.web_price.value(),
             vision_enabled=self.vision.isChecked(),
             external_sharing_enabled=self.sharing.isChecked(),
             github_remote_url=github,
@@ -365,9 +392,11 @@ class SettingsPage(QWidget):
         self.pause_btn.setText("Resume" if s.paused else "Pause")
         today = rt.ledger.today_stats()
         totals = rt.ledger.totals()
+        searches = int(today.get("web_searches") or 0)
+        search_note = f" (including {searches} web search{'es' if searches != 1 else ''})" if searches else ""
         self.usage.setText(
             f"Today: <b>${(today.get('cost') or 0):.4f}</b> of ${s.daily_budget_usd:.2f} · "
-            f"{today.get('requests', 0)} requests. All time: ${(totals.get('cost') or 0):.4f} over "
+            f"{today.get('requests', 0)} requests{search_note}. All time: ${(totals.get('cost') or 0):.4f} over "
             f"{totals.get('requests', 0)} requests. <i>Estimates - check the Anthropic Console for billing.</i>"
         )
         self.history.clear()

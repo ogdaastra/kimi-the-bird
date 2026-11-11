@@ -49,6 +49,7 @@ class AIResult:
     stop_reason: str | None
     request_id: str | None = None
     latency_ms: int = 0
+    citations: list = field(default_factory=list)
 
 
 class KeyTestResult(NamedTuple):
@@ -117,13 +118,33 @@ def _usage_from(response: Any, cache_ttl: str) -> TokenUsage:
         except (TypeError, ValueError):
             return 0
 
+    server = getattr(u, "server_tool_use", None)
+    try:
+        searches = int(getattr(server, "web_search_requests", 0) or 0)
+    except (TypeError, ValueError):
+        searches = 0
     return TokenUsage(
         input_tokens=g("input_tokens"),
         output_tokens=g("output_tokens"),
         cache_read_tokens=g("cache_read_input_tokens"),
         cache_write_tokens=g("cache_creation_input_tokens"),
         cache_ttl=cache_ttl,
+        web_searches=searches,
     )
+
+
+def _citations_of(response: Any) -> list[dict]:
+    """Web-search citations attached to text blocks (url, title, cited text)."""
+    seen: dict[str, dict] = {}
+    for block in getattr(response, "content", None) or []:
+        if getattr(block, "type", None) != "text":
+            continue
+        for c in getattr(block, "citations", None) or []:
+            url = str(getattr(c, "url", "") or "")
+            if url.startswith("https://") and url not in seen:
+                seen[url] = {"url": url[:300], "title": str(getattr(c, "title", "") or "")[:160],
+                             "cited_text": str(getattr(c, "cited_text", "") or "")[:200]}
+    return list(seen.values())[:6]
 
 
 def _text_of(response: Any) -> str:
@@ -317,7 +338,11 @@ class ClaudeClient:
         effort: str = "low",
         schema: dict | None = None,
         thinking: str = "adaptive",
+        web_search: dict | None = None,
     ) -> AIResult:
+        """Send one request. ``web_search`` (opt-in callers only) adds Anthropic's
+        server-side web search tool; its ``max_uses`` caps searches and is priced
+        into the worst-case budget check."""
         if self._halted.is_set():
             raise AIError("stopped", "AI requests are stopped.")
         key = self._refresh_key_status()
@@ -344,8 +369,10 @@ class ClaudeClient:
 
         # Budget guard (worst case: full max_tokens output).
         ttl = self.cache_ttl()
+        max_searches = int(web_search.get("max_uses", 1)) if web_search else 0
         try:
-            self.ledger.check_budget(worst_case_cost(est_input, max_tokens, s, ttl))
+            self.ledger.check_budget(worst_case_cost(est_input, max_tokens, s, ttl, max_searches=max_searches,
+                                                     search_tokens=25_000 * max_searches))
         except BudgetExceeded as exc:
             with self._lock:
                 self._status = STATUS_BUDGET_PAUSED
@@ -369,6 +396,10 @@ class ClaudeClient:
             "output_config": output_config,
             "thinking": {"type": "adaptive"} if thinking == "adaptive" else {"type": "disabled"},
         }
+        if web_search:
+            if schema is not None:
+                raise AIError("bad_request", "Web search requests return plain text, not structured JSON.")
+            request["tools"] = [dict(web_search)]
 
         attempts = max(1, s.max_retries + 1)
         last_err: AIError | None = None
@@ -423,6 +454,7 @@ class ClaudeClient:
                 self.last_error = err
                 raise err
             text = _text_of(response)
+            citations = _citations_of(response) if web_search else []
             data = None
             if schema is not None:
                 try:
@@ -436,7 +468,8 @@ class ClaudeClient:
                     raise err from None
             self.last_error = None
             return AIResult(text=text, data=data, usage=usage, cost_usd=cost,
-                            stop_reason=stop_reason, request_id=request_id, latency_ms=latency)
+                            stop_reason=stop_reason, request_id=request_id, latency_ms=latency,
+                            citations=citations)
 
         assert last_err is not None
         if last_err.retryable:

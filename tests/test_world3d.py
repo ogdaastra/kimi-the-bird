@@ -78,7 +78,7 @@ def test_day_and_night_differ():
 
 def test_town_meshes_are_valid_vertex_data():
     meshes = mesh3d.town_meshes()
-    assert set(meshes) == {"terrain", "paths", "buildings", "glow", "nature", "water"}
+    assert set(meshes) == {"terrain", "paths", "buildings", "glow", "nature", "curiosities", "water"}
     for name, mesh in meshes.items():
         assert mesh.vertex_count > 0 and mesh.vertex_count % 3 == 0, name
         raw = mesh.to_bytes()
@@ -158,7 +158,7 @@ def test_thought_bubble_pops_only_for_new_thoughts():
 def test_runtime_pose(make_runtime):
     rt = make_runtime()
     pose = rt.pose()
-    assert set(pose) == {"location", "travel", "action", "asleep", "hour", "weather"}
+    assert set(pose) == {"location", "travel", "action", "curiosity", "asleep", "hour", "weather"}
     rt.advance_world(30)
     pose = rt.pose()
     assert pose["location"] in LOCATIONS
@@ -191,6 +191,17 @@ def qt_app():
     return widgets.QApplication.instance() or widgets.QApplication([])
 
 
+def _dispose(app, *widgets) -> None:
+    """Delete Qt Quick widgets while the application is alive (avoids crashes at interpreter exit)."""
+    from PySide6.QtCore import QEvent
+
+    for w in widgets:
+        w.close()
+        w.deleteLater()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
 def test_qml_scene_loads_without_errors(qt_app, make_runtime):
     from PySide6.QtQuickWidgets import QQuickWidget
 
@@ -209,7 +220,7 @@ def test_qml_scene_loads_without_errors(qt_app, make_runtime):
     view.show()
     view._poll()
     assert view.bridge.state["location"] in LOCATIONS
-    view.close()
+    _dispose(qt_app, view)
 
 
 def test_world_page_falls_back_to_the_map(qt_app, make_runtime):
@@ -224,3 +235,4 @@ def test_world_page_falls_back_to_the_map(qt_app, make_runtime):
     page.update_from(rt.snapshot())
     map_page = WorldPage(rt, mode="map")
     assert map_page.mode == "map" and map_page.view3d is None
+    _dispose(qt_app, page, map_page)

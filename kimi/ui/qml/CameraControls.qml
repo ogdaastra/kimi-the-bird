@@ -26,7 +26,7 @@ Item {
     WheelHandler {
         onWheel: event => {
             const factor = 1 - event.angleDelta.y / 1200
-            controls.rig.targetDistance = Math.max(110, Math.min(2800, controls.rig.targetDistance * factor))
+            controls.rig.targetDistance = Math.max(80, Math.min(2800, controls.rig.targetDistance * factor))
             controls.interacted()
         }
     }

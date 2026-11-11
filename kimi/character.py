@@ -231,6 +231,18 @@ class CharacterSheet:
             self.data["goals"] = goals[-20:]
             return True
 
+    def ensure_goal(self, text: str, target: int, day: int) -> bool:
+        """Add a counted goal unless Kimi already has (or has finished) it."""
+        with self.lock:
+            goals = self.data["goals"]
+            if any(g["text"].lower() == text.lower() for g in goals):
+                return False
+            if len([g for g in goals if g["status"] == "active"]) >= MAX_ACTIVE_GOALS:
+                return False
+            goals.append({"text": text, "status": "active", "progress": 0, "target": target, "since_day": day})
+            self.data["goals"] = goals[-20:]
+            return True
+
     def progress_goal(self, keyword: str, amount: int = 1) -> dict | None:
         """Advance the first active goal mentioning ``keyword``; complete it at its target."""
         with self.lock:

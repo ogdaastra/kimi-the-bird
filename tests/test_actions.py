@@ -205,15 +205,15 @@ def test_research_uses_public_api_politely(settings):
 
 def test_research_refuses_untrusted_redirects_and_bad_content(settings):
     redirect = FakeResponse({"query": {"search": []}}, "https://evil.example.com/steal")
-    r = WikipediaResearcher(settings, session=FakeSession([("https://en.wikipedia.org", redirect)]), min_interval_s=0)
+    r = WikipediaResearcher(settings, session=FakeSession([("https://", redirect)]), min_interval_s=0)
     with pytest.raises(ResearchUnavailable):
         r.investigate("owls")
     html = FakeResponse(None, "https://en.wikipedia.org/w/api.php", ctype="text/html", raw=b"<html>")
-    r = WikipediaResearcher(settings, session=FakeSession([("https://en.wikipedia.org", html)]), min_interval_s=0)
+    r = WikipediaResearcher(settings, session=FakeSession([("https://", html)]), min_interval_s=0)
     with pytest.raises(ResearchUnavailable):
         r.investigate("owls")
     huge = FakeResponse(None, "https://en.wikipedia.org/w/api.php", raw=b"{" + b" " * 400_000 + b"}")
-    r = WikipediaResearcher(settings, session=FakeSession([("https://en.wikipedia.org", huge)]), min_interval_s=0)
+    r = WikipediaResearcher(settings, session=FakeSession([("https://", huge)]), min_interval_s=0)
     with pytest.raises(ResearchUnavailable):
         r.investigate("owls")
 
@@ -222,7 +222,7 @@ def test_rate_limit_triggers_cooldown(settings):
     from kimi.actions.research import RateLimited
 
     limited = FakeResponse(None, "https://en.wikipedia.org/x", status=429, ctype="text/plain", raw=b"slow down")
-    session = FakeSession([("https://en.wikipedia.org", limited)])
+    session = FakeSession([("https://en.wikipedia.org", limited), ("https://simple.wikipedia.org", limited)])
     r = WikipediaResearcher(settings, session=session, min_interval_s=0)
     with pytest.raises(RateLimited):
         r.investigate("owls")

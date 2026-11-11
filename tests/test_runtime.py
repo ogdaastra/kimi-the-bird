@@ -3,7 +3,6 @@
 import json
 
 from kimi.ai.mock import ScriptedHaiku, decision, make_response
-from kimi.config import Paths
 
 from .helpers import Sequence
 

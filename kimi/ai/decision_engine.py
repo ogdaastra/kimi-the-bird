@@ -23,8 +23,19 @@ from .prompts import (
     render_decision_context,
     render_reflection_prompt,
     render_research_prompt,
+    render_web_research_prompt,
     research_schema,
 )
+
+# Anthropic's server-side web search tool. Used only through
+# KimiRuntime.web_research_status's gates: one search per session, and never
+# on social media or forums.
+WEB_SEARCH_BLOCKED = ["facebook.com", "x.com", "twitter.com", "instagram.com", "tiktok.com", "reddit.com"]
+
+
+def web_search_tool(max_uses: int = 1) -> dict:
+    return {"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses,
+            "blocked_domains": list(WEB_SEARCH_BLOCKED), "allowed_callers": ["direct"]}
 
 log = logging.getLogger("kimi.decisions")
 
@@ -70,18 +81,39 @@ class DecisionEngine:
         assert result.data is not None
         return result.data
 
-    def interpret_research(self, topic: str, title: str, extract: str, url: str, self_summary: str) -> dict:
+    def interpret_research(self, topic: str, title: str, extract: str, url: str, self_summary: str,
+                           shelf_name: str = "Professor Quill's encyclopedia") -> dict:
         s = self.settings.get()
         result = self.client.complete(
             purpose="research",
             system=SYSTEM_PROMPT,
-            user_content=render_research_prompt(topic, title, extract, url, self_summary),
+            user_content=render_research_prompt(topic, title, extract, url, self_summary, shelf_name),
             max_tokens=s.research_max_tokens,
             effort="low",
             schema=research_schema(),
         )
         assert result.data is not None
         return result.data
+
+    def web_research(self, topic: str, prior: str, self_summary: str) -> dict:
+        """One wider-web search through Anthropic's web search tool. Returns text and citations.
+
+        Structured outputs are not combined with server tools, so the reply is plain text.
+        """
+        s = self.settings.get()
+        result = self.client.complete(
+            purpose="web_research",
+            system=SYSTEM_PROMPT,
+            user_content=render_web_research_prompt(topic, prior, self_summary),
+            max_tokens=s.research_max_tokens,
+            effort="low",
+            schema=None,
+            web_search=web_search_tool(1),
+        )
+        text = (result.text or "").strip()
+        if not text:
+            raise AIError("empty", "The speaking-tube gave no answer")
+        return {"text": text, "citations": list(result.citations)}
 
     def reflect(self, day: int, highlights: list[str], self_summary: str, goals: list[str], stats: str) -> dict:
         s = self.settings.get()

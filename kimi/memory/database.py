@@ -135,7 +135,8 @@ CREATE TABLE IF NOT EXISTS api_usage(
     success INTEGER NOT NULL,
     error_kind TEXT,
     latency_ms INTEGER,
-    request_id TEXT
+    request_id TEXT,
+    web_searches INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_usage_day ON api_usage(day);
 CREATE TABLE IF NOT EXISTS events(
@@ -164,7 +165,17 @@ CREATE TABLE IF NOT EXISTS research_log(
     title TEXT,
     source_url TEXT,
     summary TEXT,
-    takeaway TEXT
+    takeaway TEXT,
+    source TEXT NOT NULL DEFAULT 'encyclopedia',
+    citations TEXT NOT NULL DEFAULT '[]'
+);
+CREATE TABLE IF NOT EXISTS curiosity_visits(
+    curiosity TEXT PRIMARY KEY,
+    first_seen REAL NOT NULL,
+    last_seen REAL NOT NULL,
+    first_day INTEGER NOT NULL DEFAULT 1,
+    visits INTEGER NOT NULL DEFAULT 0,
+    last_detail TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS outbox(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,8 +210,21 @@ class Database:
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
+            self._migrate()
         self._depth = 0
         self.closed = False
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created."""
+        added = {
+            "research_log": (("source", "TEXT NOT NULL DEFAULT 'encyclopedia'"), ("citations", "TEXT NOT NULL DEFAULT '[]'")),
+            "api_usage": (("web_searches", "INTEGER NOT NULL DEFAULT 0"),),
+        }
+        for table, columns in added.items():
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for name, decl in columns:
+                if name not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     # -- basic operations -------------------------------------------------
     def execute(self, sql: str, params: tuple | list = ()) -> sqlite3.Cursor:

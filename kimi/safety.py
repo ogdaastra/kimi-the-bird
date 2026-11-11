@@ -35,6 +35,7 @@ ALLOWED_ACTIONS: tuple[str, ...] = (
     "sleep",
     "rest",
     "explore",
+    "examine",
     "observe",
     "read_note",
     "research",
@@ -56,8 +57,16 @@ FORBIDDEN_CAPABILITY_WORDS = (
     "credential", "api_key",
 )
 
-# Hosts the research module may contact. HTTPS GET only.
-TRUSTED_HOSTS: frozenset[str] = frozenset({"en.wikipedia.org"})
+# Hosts the research module may contact (the Library's shelves). HTTPS GET only.
+TRUSTED_HOSTS: frozenset[str] = frozenset({
+    "en.wikipedia.org",       # encyclopedia
+    "simple.wikipedia.org",   # gentle children's encyclopedia
+    "en.wiktionary.org",      # dictionary
+    "api.inaturalist.org",    # nature field guide
+    "images-api.nasa.gov",    # star atlas
+    "api.artic.edu",          # art folio (Art Institute of Chicago)
+    "openlibrary.org",        # book catalogue
+})
 
 
 class SafetyViolation(Exception):

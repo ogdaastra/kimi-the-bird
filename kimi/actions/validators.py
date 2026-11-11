@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from ..ai.prompts import ART_KINDS, DRAWING_ELEMENTS
+from ..ai.prompts import ART_KINDS, DRAWING_ELEMENTS, RESEARCH_SOURCES, WIDER_WORLD
 from ..character import MOODS
+from ..world.curiosities import BY_ID as CURIOSITIES
 from ..safety import SafetyViolation, check_action_name, clean_text, sanitize_output
 from ..world.locations import ART_LOCATION, HOME, NOTE_LOCATION, RESEARCH_LOCATION, LocationGraph
 
@@ -37,6 +38,8 @@ class RawDecision(BaseModel):
     thought: str | None = None
     destination: str | None = None
     topic: str | None = None
+    research_source: str | None = None
+    curiosity_id: str | None = None
     food: str | None = None
     art_kind: str | None = None
     title: str | None = None
@@ -72,6 +75,9 @@ class ValidationContext:
     research_allowed: bool = True
     research_block_reason: str = ""
     sharing_enabled: bool = False
+    # Wider-web gate: topic -> (allowed, reason). None means never allowed.
+    web_check: Callable[[str], tuple[bool, str]] | None = None
+    curiosity_zones: dict[str, str] = field(default_factory=dict)   # curiosity id -> place
 
 
 @dataclass
@@ -83,7 +89,7 @@ class ValidatedAction:
 
     def describe(self) -> str:
         bits = [self.action]
-        for key in ("destination", "food", "topic", "art_kind", "title", "note_id"):
+        for key in ("destination", "food", "topic", "source", "curiosity", "art_kind", "title", "note_id"):
             if self.params.get(key) not in (None, ""):
                 bits.append(f"{key}={self.params[key]}")
         return " ".join(str(b) for b in bits)
@@ -225,7 +231,24 @@ def validate_decision(raw: dict, ctx: ValidationContext) -> ValidatedAction:
         topic = _clean_topic(d.topic)
         if len(topic) < 2:
             raise ActionRejected("Research needs a topic")
-        return ValidatedAction(a, {"topic": topic}, RESEARCH_LOCATION, extras)
+        source = d.research_source if d.research_source in RESEARCH_SOURCES else "encyclopedia"
+        params = {"topic": topic, "source": source}
+        if source == WIDER_WORLD:
+            allowed, why = ctx.web_check(topic) if ctx.web_check else (False, "the speaking-tube is switched off")
+            if not allowed:
+                # Never an error: Kimi simply reads Professor Quill's encyclopedia instead.
+                params = {"topic": topic, "source": "encyclopedia", "web_declined": why}
+        return ValidatedAction(a, params, RESEARCH_LOCATION, extras)
+
+    if a == "examine":
+        cid = (d.curiosity_id or "").strip()
+        if cid not in CURIOSITIES:
+            raise ActionRejected(f"Unknown curiosity {d.curiosity_id!r}")
+        zone = ctx.curiosity_zones.get(cid) or CURIOSITIES[cid].zone or here
+        if zone not in g:
+            zone = here
+        return ValidatedAction(a, {"curiosity": cid, "duration_minutes": _clamp_int(d.duration_minutes, 10, 45, 20)},
+                               zone, extras)
 
     if a == "write_diary":
         content = sanitize_output(d.content, 2500) if d.content else ""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
+from ..world.curiosities import BY_ID as CURIOSITIES
 from ..world.locations import LOCATIONS
 from . import theme
 from .widgets import Card, NeedBar, esc, kimi_pixmap, label
@@ -93,11 +94,16 @@ class CharacterPage(QWidget):
         self.collection.add(self.collection_text)
         grid.addWidget(self.collection, 3, 1)
 
+        self.curios = Card("Curiosities of Bramblewick")
+        self.curios_text = label("")
+        self.curios.add(self.curios_text)
+        grid.addWidget(self.curios, 4, 0, 1, 2)
+
         self.experiences = Card("Important experiences")
         self.exp_text = label("")
         self.experiences.add(self.exp_text)
-        grid.addWidget(self.experiences, 4, 0, 1, 2)
-        grid.setRowStretch(5, 1)
+        grid.addWidget(self.experiences, 5, 0, 1, 2)
+        grid.setRowStretch(6, 1)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         self._trait_bars: dict[str, NeedBar] = {}
@@ -174,6 +180,12 @@ class CharacterPage(QWidget):
              for f in finds],
             "Nothing yet - Kimi will find things while exploring.",
         ))
+        visits = sorted(rt.curiosity_visits().values(), key=lambda v: -v["last_seen"])
+        muted = theme.tokens().ink_muted
+        lines = [f"{esc(CURIOSITIES[v['curiosity']].name)} <span style='color:{muted}'>(seen {v['visits']}×)</span> - "
+                 f"<i>{esc(v['last_detail'])}</i>" for v in visits[:8] if v["curiosity"] in CURIOSITIES]
+        head = f"<p><b>{len(visits)} of {len(CURIOSITIES)}</b> curiosities examined so far.</p>"
+        self.curios_text.setText(head + _bullets(lines, "Kimi hasn't looked closely at any curiosities yet."))
         exps = rt.ltm.important_experiences(6)
         self.exp_text.setText(_bullets([esc(m.description) for m in exps],
                                        "Important experiences appear here after Kimi's nightly reflection."))

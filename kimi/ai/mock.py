@@ -21,9 +21,31 @@ def make_response(text: str, *, input_tokens: int = 800, output_tokens: int = 12
     return SimpleNamespace(
         content=[SimpleNamespace(type="thinking", thinking="", signature="mock"), SimpleNamespace(type="text", text=text)],
         usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens,
-                              cache_read_input_tokens=cache_read, cache_creation_input_tokens=cache_write),
+                              cache_read_input_tokens=cache_read, cache_creation_input_tokens=cache_write,
+                              server_tool_use=None),
         stop_reason=stop_reason,
         _request_id="req_mock",
+    )
+
+
+def make_web_search_response(text: str, url: str = "https://www.nhm.ac.uk/discover/mosses.html",
+                             title: str = "Mosses | Natural History Museum", searches: int = 1) -> SimpleNamespace:
+    """The shape of a reply that used Anthropic's server-side web search tool."""
+    citation = SimpleNamespace(type="web_search_result_location", url=url, title=title,
+                               encrypted_index="mock", cited_text="Mosses can survive drying out completely.")
+    return SimpleNamespace(
+        content=[
+            SimpleNamespace(type="server_tool_use", id="srvtoolu_mock", name="web_search", input={"query": "moss"}),
+            SimpleNamespace(type="web_search_tool_result", tool_use_id="srvtoolu_mock",
+                            content=[SimpleNamespace(type="web_search_result", url=url, title=title,
+                                                     encrypted_content="mock", page_age=None)]),
+            SimpleNamespace(type="text", text=text, citations=[citation]),
+        ],
+        usage=SimpleNamespace(input_tokens=6200, output_tokens=160, cache_read_input_tokens=0,
+                              cache_creation_input_tokens=0,
+                              server_tool_use=SimpleNamespace(web_search_requests=searches)),
+        stop_reason="end_turn",
+        _request_id="req_mock_web",
     )
 
 
@@ -41,7 +63,8 @@ def schema_props(kwargs: dict) -> set[str]:
 
 def decision(action: str, **fields: Any) -> dict:
     base = {
-        "thought": "", "action": action, "destination": None, "topic": None, "food": None, "art_kind": None,
+        "thought": "", "action": action, "destination": None, "topic": None, "research_source": None,
+        "curiosity_id": None, "food": None, "art_kind": None,
         "title": None, "content": None, "drawing_elements": [], "duration_minutes": None, "note_id": None,
         "creation_id": None, "visitor_impression": None, "mood": "content", "interest": None, "new_goal": None,
         "opinion_subject": None, "opinion": None,
@@ -60,8 +83,10 @@ _ROTATION = [
              content="Today the light came through the oak leaves in little coins. I chased one across the moss and "
                      "it got away, as they always do. Marigold's crumpets smelled wonderful from all the way up the path.",
              mood="thoughtful"),
-    decision("research", thought="I keep wondering how moss drinks without roots.", topic="Moss", mood="curious",
-             interest="mosses"),
+    decision("research", thought="I keep wondering how moss drinks without roots.", topic="Moss",
+             research_source="nature_guide", mood="curious", interest="mosses"),
+    decision("examine", thought="That giant snail shell by the Shrub... whose was it?", curiosity_id="giant_shell",
+             mood="curious"),
     decision("observe", thought="I'll just watch for a while.", mood="calm"),
     decision("rest", thought="A little rest sounds lovely.", duration_minutes=30, mood="sleepy"),
 ]
@@ -78,6 +103,10 @@ class ScriptedHaiku:
         self.calls.append(kwargs)
         props = schema_props(kwargs)
         text = user_text(kwargs)
+        if any(t.get("type", "").startswith("web_search") for t in kwargs.get("tools") or []):
+            return make_web_search_response(
+                "The speaking-tube found a museum page saying some mosses can dry out completely and wake up again "
+                "when it rains. I love that moss just waits patiently for the weather to change its mind.")
         n_in = max(50, len(text) // 3)
         if "action" in props:
             note = re.search(r'<visitor_note id="(\d+)" from="([^"]*)"', text)

@@ -8,12 +8,14 @@ Item {
     required property var st
     required property var lay
     property string cameraMode: "follow"
+    property vector3d lookAt: Qt.vector3d(0, 0, 0)
     property int shownSerial: 0
     property bool bubbleOn: false
 
     signal followRequested
     signal townRequested
     signal placeRequested(var place)
+    signal curiosityRequested(var curio)
 
     function reposition() {
         for (let i = 0; i < labels.count; ++i) {
@@ -25,7 +27,22 @@ Item {
             chip.x = p.x - chip.width / 2
             chip.y = p.y - chip.height
         }
-        const head = view.mapFrom3DScene(Qt.vector3d(kimi.x, kimi.y + 62, kimi.z))
+        const seen = st.curiositiesSeen || []
+        for (let j = 0; j < curioLabels.count; ++j) {
+            const cc = curioLabels.itemAt(j)
+            if (!cc)
+                continue
+            const c = cc.curio
+            const near = Math.hypot(c.x - lookAt.x, c.z - lookAt.z) < 340
+            const cp = view.mapFrom3DScene(Qt.vector3d(c.x, c.y, c.z))
+            cc.current = st.curiosity === c.id
+            cc.seen = seen.indexOf(c.id) >= 0
+            cc.shown = cameraMode !== "town" && (near || cc.current) && cp.z > 0
+                       && cp.x > -40 && cp.x < width + 40 && cp.y > -10 && cp.y < height + 10
+            cc.x = cp.x - cc.width / 2
+            cc.y = cp.y - cc.height
+        }
+        const head = view.mapFrom3DScene(Qt.vector3d(kimi.x, kimi.y + 30, kimi.z))
         kimiAnchor.x = head.x
         kimiAnchor.y = head.y
         kimiAnchor.visible = head.z > 0
@@ -45,6 +62,16 @@ Item {
         id: bubbleTimer
         interval: 9000
         onTriggered: overlay.bubbleOn = false
+    }
+
+    Repeater {
+        id: curioLabels
+        model: overlay.lay.curiosities
+        delegate: CuriosityChip {
+            required property var modelData
+            curio: modelData
+            onActivated: overlay.curiosityRequested(modelData)
+        }
     }
 
     Repeater {
@@ -132,7 +159,7 @@ Item {
         Text {
             id: hint
             anchors.centerIn: parent
-            text: qsTr("Drag to look around · scroll to zoom · click a place to visit · double-click to follow Kimi")
+            text: qsTr("Drag to look around · scroll to zoom · click a place or curiosity to look · double-click to follow Kimi")
             color: "#3a2e24"
             font.pixelSize: 12
         }

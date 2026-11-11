@@ -22,6 +22,7 @@ class TokenUsage:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     cache_ttl: str = "5m"
+    web_searches: int = 0
 
     @property
     def prompt_tokens(self) -> int:
@@ -48,14 +49,18 @@ def cost_of(usage: TokenUsage, s: Settings) -> float:
         + usage.cache_read_tokens * in_rate * s.cache_read_multiplier
         + usage.cache_write_tokens * in_rate * write_mult
         + usage.output_tokens * out_rate
+        + usage.web_searches * s.price_web_search_per_1k / 1000.0
     )
 
 
-def worst_case_cost(est_input_tokens: int, max_tokens: int, s: Settings, cache_ttl: str = "5m") -> float:
-    """Upper bound for a request: every input token written to cache, full max_tokens out."""
-    in_rate, out_rate = _rates(est_input_tokens, s)
+def worst_case_cost(est_input_tokens: int, max_tokens: int, s: Settings, cache_ttl: str = "5m",
+                    max_searches: int = 0, search_tokens: int = 0) -> float:
+    """Upper bound for a request: every input token written to cache, full max_tokens out,
+    plus any web searches and the result text they add to the input."""
+    in_rate, out_rate = _rates(est_input_tokens + search_tokens, s)
     write_mult = s.cache_write_1h_multiplier if cache_ttl == "1h" else s.cache_write_5m_multiplier
-    return est_input_tokens * in_rate * max(1.0, write_mult) + max_tokens * out_rate
+    return ((est_input_tokens * max(1.0, write_mult) + search_tokens) * in_rate + max_tokens * out_rate
+            + max_searches * s.price_web_search_per_1k / 1000.0)
 
 
 def local_day(ts: float | None = None) -> str:
@@ -97,12 +102,12 @@ class UsageLedger:
         now = self.wall()
         self.db.execute(
             "INSERT INTO api_usage(created_at, day, purpose, model, input_tokens, output_tokens, "
-            "cache_read_tokens, cache_write_tokens, cost_usd, success, error_kind, latency_ms, request_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "cache_read_tokens, cache_write_tokens, cost_usd, success, error_kind, latency_ms, request_id, "
+            "web_searches) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 now, local_day(now), purpose, model, u.input_tokens, u.output_tokens,
                 u.cache_read_tokens, u.cache_write_tokens, cost, 1 if success else 0,
-                error_kind, latency_ms, request_id,
+                error_kind, latency_ms, request_id, u.web_searches,
             ),
         )
 
@@ -115,6 +120,11 @@ class UsageLedger:
         return int(self.db.scalar(
             "SELECT COUNT(*) FROM api_usage WHERE day=?", (local_day(self.wall()),), 0
         ))
+
+    def web_searches_today(self) -> int:
+        return int(self.db.scalar(
+            "SELECT SUM(web_searches) FROM api_usage WHERE day=?", (local_day(self.wall()),), 0
+        ) or 0)
 
     def check_budget(self, estimated_cost: float) -> None:
         s = self.settings.get()
@@ -133,7 +143,7 @@ class UsageLedger:
             "SELECT COUNT(*) AS requests, COALESCE(SUM(input_tokens),0) AS input, "
             "COALESCE(SUM(output_tokens),0) AS output, COALESCE(SUM(cache_read_tokens),0) AS cache_read, "
             "COALESCE(SUM(cache_write_tokens),0) AS cache_write, COALESCE(SUM(cost_usd),0) AS cost, "
-            "COALESCE(SUM(success),0) AS ok FROM api_usage WHERE day=?",
+            "COALESCE(SUM(success),0) AS ok, COALESCE(SUM(web_searches),0) AS web_searches FROM api_usage WHERE day=?",
             (local_day(self.wall()),),
         )
         return dict(row) if row else {}

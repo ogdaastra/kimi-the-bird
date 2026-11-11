@@ -21,7 +21,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QLabel,
     QProgressBar,
     QSizePolicy,
     QStackedWidget,
@@ -30,7 +29,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..world.curio3d import curiosity_layout
 from ..world.environment import WEATHER_LABELS
+from ..world.layout3d import SCALE_X, SCALE_Z
 from ..world.locations import EDGES, LOCATIONS
 from . import theme
 from .widgets import Card, NeedBar, button, esc, label, paint_kimi
@@ -243,6 +244,8 @@ class WorldCanvas(QWidget):
         for lid, loc in LOCATIONS.items():
             self._draw_place(p, lid, self._map(*loc.position), u, light, now, s)
 
+        self._draw_curiosities(p, u, now, s)
+
         for lid, loc in LOCATIONS.items():
             self._draw_label(p, loc.name, self._map(*loc.position), u, lid == s.get("location"))
 
@@ -277,6 +280,31 @@ class WorldCanvas(QWidget):
 
         self._draw_bubble(p, u, now, s)
         p.end()
+
+    _CURIO = None
+
+    def _draw_curiosities(self, p: QPainter, u: float, now: float, s: dict) -> None:
+        """Little markers for the curiosities: gold once Kimi has examined them."""
+        if WorldCanvas._CURIO is None:
+            WorldCanvas._CURIO = [(c["id"], c["x"] / SCALE_X + 0.5, c["z"] / SCALE_Z + 0.5) for c in curiosity_layout()]
+        seen = set(s.get("curiosities_seen") or [])
+        current = s.get("curiosity")
+        r = max(2.5, u * 0.09)
+        for cid, nx, ny in WorldCanvas._CURIO:
+            if not (0.025 < nx < 0.975 and 0.03 < ny < 0.97):
+                continue
+            c = self._map(nx, ny)
+            if cid == current:
+                pulse = 1.0 if self.reduce_motion else 1.0 + 0.25 * math.sin(now * 4)
+                p.setPen(QPen(QColor("#e8b73a"), 1.6))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawEllipse(c, r * 2.4 * pulse, r * 2.4 * pulse)
+            p.setPen(QPen(QColor("#6b4a33"), 1.1))
+            p.setBrush(QColor("#e8b73a") if cid in seen else QColor("#fbf3df"))
+            diamond = QPainterPath(QPointF(c.x(), c.y() - r))
+            for dx, dy in ((r, 0), (0, r), (-r, 0), (0, -r)):
+                diamond.lineTo(QPointF(c.x() + dx, c.y() + dy))
+            p.drawPath(diamond)
 
     def _draw_label(self, p: QPainter, text: str, c: QPointF, u: float, current: bool) -> None:
         f = theme.font("caption", theme.HEADING_FAMILIES, QFont.Weight.DemiBold)

@@ -12,11 +12,17 @@ Node {
     property real wanderX: 0
     property real wanderZ: 0
     property bool hasWanderGoal: false
+    property bool flying: false
+    property real lift: 0
+    property real flightDistance: 0
+    // Ground height under a point; World3D supplies the terrain from Python.
+    property var groundAt: function (gx, gz) { return 0 }
+    readonly property real birdScale: 0.5
 
     readonly property string mode: st.mode
     readonly property bool asleep: st.asleep
     readonly property bool calm: st.reduceMotion
-    readonly property real hop: walking && !calm ? Math.abs(Math.sin(clock * 11)) * 6 : 0
+    readonly property real hop: walking && !flying && !calm ? Math.abs(Math.sin(clock * 11)) * 6 : 0
     readonly property real sit: asleep ? -5 : (mode === "rest" || mode === "write") && !walking ? -3 : 0
     readonly property bool blinking: asleep || mode === "rest" || (clock % 4.1) < 0.12
     readonly property real headPitch: {
@@ -24,6 +30,8 @@ Node {
             return 28
         if (walking)
             return 0
+        if (mode === "examine")
+            return 18 + Math.sin(clock * 1.3) * 10
         if (mode === "eat")
             return Math.max(0, Math.sin(clock * 7)) * 38
         if (mode === "explore")
@@ -36,6 +44,8 @@ Node {
     }
     readonly property real headYaw: !walking && (mode === "observe" || mode === "idle") && !calm ? Math.sin(clock * 0.7) * 38 : 0
     readonly property real flap: {
+        if (flying)
+            return calm ? 30 : Math.sin(clock * 26) * 55
         if (calm)
             return 0
         if (mode === "create" && !walking)
@@ -60,6 +70,7 @@ Node {
         if (!primed) {
             x = tx
             z = tz
+            y = groundAt(x, z)
             primed = true
             if (st.kimiHeading > -900)
                 heading = st.kimiHeading
@@ -68,12 +79,20 @@ Node {
         const dx = tx - x
         const dz = tz - z
         const d = Math.hypot(dx, dz)
-        if (d > 1200) {
+        // Far-off curiosities (on the hills or the shore): Kimi flies there instead of hopping.
+        if (!flying && !st.moving && d > 170 && d <= 2600) {
+            flying = true
+            flightDistance = d
+        }
+        if (d > 2600) {
             x = tx
             z = tz
             walking = false
+            flying = false
         } else if (d > 1.5) {
-            const speed = st.moving ? Math.max(45, d * 2.2) : Math.max(35, Math.min(90, d * 1.5))
+            let speed = st.moving ? Math.max(45, d * 2.2) : Math.max(35, Math.min(90, d * 1.5))
+            if (flying)
+                speed = Math.max(60, Math.min(260, d * 1.4))
             const stepLen = Math.min(d, speed * dt)
             x += dx / d * stepLen
             z += dz / d * stepLen
@@ -81,16 +100,22 @@ Node {
             heading += shortestAngle(heading, Math.atan2(dx, dz) * 180 / Math.PI) * Math.min(1, dt * 8)
         } else {
             walking = false
+            flying = false
             if (st.kimiHeading > -900)
                 heading += shortestAngle(heading, st.kimiHeading) * Math.min(1, dt * 3)
         }
+        const cruise = flying ? Math.min(70, 20 + flightDistance * 0.05) * Math.min(1, d / 60) : 0
+        lift += (cruise - lift) * Math.min(1, dt * 2.5)
+        if (!flying && lift < 0.2)
+            lift = 0
+        y = groundAt(x, z) + lift
     }
 
     eulerRotation.y: heading
-    scale: Qt.vector3d(1.2, 1.2, 1.2)
+    scale: Qt.vector3d(birdScale, birdScale, birdScale)
 
     Timer {
-        running: bird.st.wander && !bird.asleep
+        running: bird.st.wander && !bird.asleep && !bird.flying
         repeat: true
         triggeredOnStart: true
         interval: 3000

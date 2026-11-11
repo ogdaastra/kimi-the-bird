@@ -191,6 +191,81 @@ class MeshBuilder:
         self.tri(f0, r0, b0, g, (-fx[0], 0, -fx[1]))
         self.quad(f0, b0, b1, f1, shade(color, 0.55), (0, -1, 0))
 
+    @staticmethod
+    def _frame(p0, p1, side_hint=None):
+        f = _norm(_sub(p1, p0))
+        if side_hint is not None:
+            dot = sum(side_hint[k] * f[k] for k in range(3))
+            side = _norm(tuple(side_hint[k] - f[k] * dot for k in range(3)))
+        else:
+            ref = (0.0, 1.0, 0.0) if abs(f[1]) < 0.95 else (1.0, 0.0, 0.0)
+            side = _norm(_cross(f, ref))
+        up = _cross(side, f)
+        return f, side, up
+
+    def tube(self, p0, p1, r0, r1, seg, color: Color, caps: bool = True, inward: bool = False) -> None:
+        """A cylinder (or cone) between two arbitrary points."""
+        _f, side, up = self._frame(p0, p1)
+
+        def ring(p, r):
+            out = []
+            for i in range(seg):
+                a = 2 * math.pi * (i + 0.5) / seg
+                c, s = math.cos(a), math.sin(a)
+                out.append((p[0] + (side[0] * c + up[0] * s) * r, p[1] + (side[1] * c + up[1] * s) * r,
+                            p[2] + (side[2] * c + up[2] * s) * r))
+            return out
+
+        a_ring, b_ring = ring(p0, r0), ring(p1, max(r1, 0.0))
+        for i in range(seg):
+            j = (i + 1) % seg
+            a = 2 * math.pi * (i + 1.0) / seg
+            n = tuple(side[k] * math.cos(a) + up[k] * math.sin(a) for k in range(3))
+            hint = (-n[0], -n[1], -n[2]) if inward else n
+            col = shade(color, 0.86 + 0.16 * (0.5 + 0.5 * n[1]))
+            if r1 <= 0.01:
+                self.tri(a_ring[i], a_ring[j], p1, col, hint)
+            else:
+                self.quad(a_ring[i], a_ring[j], b_ring[j], b_ring[i], col, hint)
+        if caps:
+            f = _norm(_sub(p1, p0))
+            for i in range(seg):
+                j = (i + 1) % seg
+                self.tri(p0, a_ring[i], a_ring[j], shade(color, 0.8), (-f[0], -f[1], -f[2]))
+                if r1 > 0.01:
+                    self.tri(p1, b_ring[i], b_ring[j], shade(color, 1.04), f)
+
+    def beam(self, p0, p1, w, color: Color, h: float | None = None, side=None) -> None:
+        """A rectangular bar between two points: w along ``side`` (horizontal by default), h across it."""
+        _f, side, up = self._frame(p0, p1, side)
+        h = w if h is None else h
+        sx, ux = [side[k] * w / 2 for k in range(3)], [up[k] * h / 2 for k in range(3)]
+
+        def c(p, ss, us):
+            return (p[0] + sx[0] * ss + ux[0] * us, p[1] + sx[1] * ss + ux[1] * us, p[2] + sx[2] * ss + ux[2] * us)
+
+        a = [c(p0, -1, -1), c(p0, 1, -1), c(p0, 1, 1), c(p0, -1, 1)]
+        b = [c(p1, -1, -1), c(p1, 1, -1), c(p1, 1, 1), c(p1, -1, 1)]
+        faces = ((0, 1, up, 0.75), (1, 2, side, 0.92), (2, 3, up, 1.05), (3, 0, side, 0.88))
+        for i, j, axis, f in faces:
+            sign = 1 if (i, j) in ((1, 2), (2, 3)) else -1
+            self.quad(a[i], a[j], b[j], b[i], shade(color, f), tuple(sign * v for v in axis))
+        fwd = _norm(_sub(p1, p0))
+        self.quad(a[0], a[1], a[2], a[3], shade(color, 0.85), (-fwd[0], -fwd[1], -fwd[2]))
+        self.quad(b[0], b[1], b[2], b[3], shade(color, 1.0), fwd)
+
+    def annulus(self, centre, axis, r_out, r_in, seg, color: Color) -> None:
+        """A flat ring facing along ``axis`` (e.g. the end of a hollow log)."""
+        _f, side, up = self._frame(centre, tuple(centre[k] + axis[k] for k in range(3)))
+        n = _norm(axis)
+
+        def pt(a, r):
+            return tuple(centre[k] + (side[k] * math.cos(a) + up[k] * math.sin(a)) * r for k in range(3))
+
+        for i in range(seg):
+            a0, a1 = 2 * math.pi * i / seg, 2 * math.pi * (i + 1) / seg
+            self.quad(pt(a0, r_in), pt(a0, r_out), pt(a1, r_out), pt(a1, r_in), color, n)
+
     def pyramid(self, x, y, z, w, d, h, color: Color, rot: float = 0.0) -> None:
         P = lambda lx, ly, lz: self._xf(x, y, z, rot, lx, ly, lz)  # noqa: E731
         hw, hd = w / 2, d / 2
@@ -359,6 +434,24 @@ def _lamp(b: MeshBuilder, glow: MeshBuilder, x: float, z: float, h: float = 70.0
     b.pyramid(x, h + 15, z, 14, 14, 8, DARK)
 
 
+# The Shrub's foliage blobs: offset x, y, z from its centre, radius, colour.
+SHRUB_BLOBS = ((0, 70, 0, 95, "#5d9157"), (-80, 45, 30, 62, "#6da567"), (75, 50, 25, 66, "#5d9157"),
+               (20, 40, 80, 58, "#79b071"), (-40, 55, -70, 64, "#669e60"), (60, 95, -40, 55, "#6da567"))
+
+
+def shrub_surface(angle_world_deg: float, y: float = 12.0) -> float:
+    """Distance from the Shrub's centre to the edge of its foliage at height y, along a world angle."""
+    s = PLACES["shrub"]
+    ux, uz = math.sin(math.radians(angle_world_deg)), math.cos(math.radians(angle_world_deg))
+    r = 0.0
+    while r < 220:
+        x, z = s.x + ux * r, s.z + uz * r
+        if not any(math.dist((x, y, z), (s.x + dx, dy, s.z + dz)) < br * 0.97 for dx, dy, dz, br, _ in SHRUB_BLOBS):
+            return r
+        r += 2.0
+    return r
+
+
 def build_buildings() -> tuple[MeshData, MeshData]:
     b, glow = MeshBuilder(), MeshBuilder()
     rng = random.Random(21)
@@ -381,8 +474,7 @@ def build_buildings() -> tuple[MeshData, MeshData]:
 
     # The Shrub: a huge tangled bush with berries.
     s = P["shrub"]
-    for dx, dy, dz, r, col in ((0, 70, 0, 95, "#5d9157"), (-80, 45, 30, 62, "#6da567"), (75, 50, 25, 66, "#5d9157"),
-                              (20, 40, 80, 58, "#79b071"), (-40, 55, -70, 64, "#669e60"), (60, 95, -40, 55, "#6da567")):
+    for dx, dy, dz, r, col in SHRUB_BLOBS:
         b.icosphere(s.x + dx, dy, s.z + dz, r, rgb(col), subdiv=1, rng=rng, jitter=0.15)
     for _ in range(36):
         a, e = rng.uniform(0, 2 * math.pi), rng.uniform(0.2, 1.2)
@@ -589,18 +681,27 @@ def build_nature(seed: int = 5) -> MeshData:
     b = MeshBuilder()
     rng = random.Random(seed)
     polys = path_polylines()
+    from .curio3d import occupied_by_curiosities, view_corridors
+
+    curios = occupied_by_curiosities()
+    corridors = view_corridors()
+
+    def clear_view(x: float, z: float, r: float) -> bool:
+        return all(math.hypot(x - cx, z - cz) >= cr + r for cx, cz, cr in corridors)
+
     occ = list(_occupied()) + [(x, z, 80) for x, z, *_ in _village_houses()]
     occ += [(x, z, 14) for x, z in _path_lamps()]
+    occ += curios
     greens = ["#5f8f55", "#6fa36b", "#79b071", "#4f7f4a", "#86b96f"]
     placed = 0
     tries = 0
-    while placed < 120 and tries < 4000:
+    while placed < 108 and tries < 4000:
         tries += 1
         rim = placed < 90
         a = rng.uniform(0, 2 * math.pi)
         r = rng.uniform(TOWN_RADIUS - 30, ISLAND_RADIUS - 60) if rim else rng.uniform(150, TOWN_RADIUS - 40)
         x, z = math.cos(a) * r, math.sin(a) * r
-        if not _free(x, z, 30, occ, polys, 30, tall=True):
+        if not _free(x, z, 30, occ, polys, 30, tall=True) or not clear_view(x, z, 30):
             continue
         y = height(x, z)
         if y < WATER_LEVEL + 6:
@@ -621,7 +722,7 @@ def build_nature(seed: int = 5) -> MeshData:
     for _ in range(40):
         a, r = rng.uniform(0, 2 * math.pi), rng.uniform(140, TOWN_RADIUS + 120)
         x, z = math.cos(a) * r, math.sin(a) * r
-        if _free(x, z, 18, occ, polys, 18, tall=True):
+        if _free(x, z, 18, occ, polys, 18, tall=True) and clear_view(x, z, 18):
             y = height(x, z)
             b.icosphere(x, y + 12, z, rng.uniform(16, 26), rgb(rng.choice(greens)), subdiv=1, squash=(1, 0.75, 1), rng=rng, jitter=0.15)
     # flowers in little clusters
@@ -649,8 +750,10 @@ def build_nature(seed: int = 5) -> MeshData:
         a, r = rng.uniform(0, 2 * math.pi), rng.uniform(TOWN_RADIUS, ISLAND_RADIUS + 60)
         x, z = math.cos(a) * r, math.sin(a) * r
         y = height(x, z)
-        b.icosphere(x, y + 4, z, rng.uniform(10, 28), rgb(rng.choice(["#9a958a", "#8a857b", "#a8a296"])), subdiv=0,
-                    squash=(1.2, 0.6, 1.0), rng=rng, jitter=0.2)
+        size, col = rng.uniform(10, 28), rgb(rng.choice(["#9a958a", "#8a857b", "#a8a296"]))
+        if any(math.hypot(x - cx, z - cz) < cr + size for cx, cz, cr in curios):
+            continue
+        b.icosphere(x, y + 4, z, size, col, subdiv=0, squash=(1.2, 0.6, 1.0), rng=rng, jitter=0.2)
     # fences in front of village houses
     for vx, vz, rot, *_ in _village_houses():
         for k in range(-3, 4):
@@ -687,22 +790,36 @@ def build_pond_rim() -> MeshData:
     return b.finish()
 
 
+def _merge(a: MeshData, b: MeshData) -> MeshData:
+    if b.vertex_count == 0:
+        return a
+    if a.vertex_count == 0:
+        return b
+    data = array("f", a.vertices)
+    data.extend(b.vertices)
+    return MeshData(data, a.vertex_count + b.vertex_count,
+                    tuple(min(x, y) for x, y in zip(a.bounds_min, b.bounds_min)),
+                    tuple(max(x, y) for x, y in zip(a.bounds_max, b.bounds_max)))
+
+
 @lru_cache(maxsize=1)
 def town_meshes() -> dict[str, MeshData]:
     """All static meshes of the town, built once and cached."""
+    from .curio3d import build_curiosities
+
     buildings, glow = build_buildings()
+    curios, curio_glow = build_curiosities()
+    glow = _merge(glow, curio_glow)
     nature = build_nature()
     rim = build_pond_rim()
-    nature.vertices.extend(rim.vertices)
-    nature = MeshData(nature.vertices, nature.vertex_count + rim.vertex_count,
-                      tuple(min(a, b) for a, b in zip(nature.bounds_min, rim.bounds_min)),
-                      tuple(max(a, b) for a, b in zip(nature.bounds_max, rim.bounds_max)))
+    nature = _merge(nature, rim)
     return {
         "terrain": build_terrain(),
         "paths": build_paths(),
         "buildings": buildings,
         "glow": glow,
         "nature": nature,
+        "curiosities": curios,
         "water": build_water(),
     }
 

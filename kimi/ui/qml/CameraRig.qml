@@ -6,10 +6,10 @@ Node {
 
     property alias camera: cam
     property real yaw: 30
-    property real pitch: 38
-    property real targetPitch: 38
-    property real distance: 500
-    property real targetDistance: 500
+    property real pitch: 32
+    property real targetPitch: 32
+    property real distance: 270
+    property real targetDistance: 270
     property real blockedDistance: 1e9
     property bool primed: false
 

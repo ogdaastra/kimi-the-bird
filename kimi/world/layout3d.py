@@ -180,7 +180,7 @@ MODE_FOR_ACTION = {
     "sleep": "sleep", "eat": "eat", "read_note": "read", "leave_message": "read", "create_art": "create",
     "share_creation": "create", "research": "research", "write_diary": "write", "reflect": "write",
     "rest": "rest", "explore": "explore", "observe": "observe", "visit_location": "observe",
-    "linger": "idle", "continue": "idle",
+    "linger": "idle", "continue": "idle", "examine": "examine",
 }
 
 
@@ -219,6 +219,15 @@ def kimi_target(pose: dict) -> dict:
     location = pose.get("location") or "nest"
     if pose.get("asleep"):
         action = "sleep"
+    if action == "examine" and pose.get("curiosity"):
+        from .curio3d import curiosity_spots  # late import: curio3d builds on this module
+
+        spot = curiosity_spots().get(pose["curiosity"])
+        if spot:
+            # Stand in front of the curiosity, facing it, with the camera over Kimi's shoulder.
+            return {"x": spot["standX"], "z": spot["standZ"], "heading": spot["rot"] + 180.0, "moving": False,
+                    "wander": False, "radius": 0.0, "mode": "examine", "viewYaw": spot["rot"] + 28.0,
+                    "curiosity": spot["id"]}
     x, z, facing = activity_spot(location, action)
     wander = action in WANDER_ACTIONS and not pose.get("asleep")
     radius = 0.0

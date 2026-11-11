@@ -5,9 +5,12 @@ storybook island town on your Windows computer, which you can watch and
 explore in **3D**. Kimi has its own personality,
 needs, memories, interests and routines. It wanders between the Nest, the
 Shrub, the Shrine, the Cafe, the Print Shop and the Library. It finds
-things, researches what it's curious about, makes drawings and stories,
-writes a diary, and reads the notes visitors leave it. It does all this on
-its own schedule, and it doesn't need you to keep prompting it.
+things, pokes at the town's **63 curiosities** (a tiny green door in the
+oak's roots, a lighthouse that blinks a secret code, a clock stuck at 4:17…),
+researches what it's curious about on the Library's trusted shelves, makes
+drawings and stories, writes a diary, and reads the notes visitors leave it.
+It does all this on its own schedule, and it doesn't need you to keep
+prompting it.
 
 Kimi thinks with **Claude Haiku 5.5** (`claude-haiku-5-5`) through the
 official Anthropic Python SDK, using your own API key. Everything else, such
@@ -15,6 +18,11 @@ as walking, hunger, weather, day and night, and simple habits, is simulated
 locally for free, so API usage stays very low.
 
 ![Bramblewick in 3D](docs/screenshots/world3d-town.png)
+
+| | |
+|---|---|
+| ![Kimi examining the Wishing Well](docs/screenshots/world3d-curiosity-well.png) | ![Kimi and the Statue of Bramble the Badger](docs/screenshots/world3d-curiosity-statue.png) |
+| ![Kimi flew up to the Smiling Rock on the hills](docs/screenshots/world3d-curiosity-hill.png) | ![The Little Lighthouse blinking at night](docs/screenshots/world3d-lighthouse-night.png) |
 
 ![Kimi's world screen](docs/screenshots/world.png)
 
@@ -125,13 +133,14 @@ your actual usage in the [Anthropic Console](https://console.anthropic.com/).
 |---|---|---|
 | Daily spending limit | $0.25 | When reached, AI requests pause until midnight. The world and Kimi's local instincts keep running. |
 | Maximum requests per day | 300 | A hard cap on the number of API requests. |
-| Maximum request size | 6,000 tokens | Larger prompts are trimmed, or refused if they still don't fit. |
+| Maximum request size | 10,000 tokens | Larger prompts are trimmed, or refused if they still don't fit. (Most of each request is the cached system prompt, which includes the curiosity catalogue.) |
 | Maximum response size | 2,000 / 2,500 / 1,200 tokens | Caps for decisions, reflection and research. |
 | Minimum time between AI decisions | 3 min | Real time; there is also a hard 2-second floor between any two requests. |
 | Longest quiet gap | 20 min | The ceiling for adaptive idle. |
 | World speed | 4× | World minutes per real minute. Slower means fewer decisions per real hour. |
 | Thinking effort | low / medium | Haiku 5.5's effort setting for decisions and the nightly reflection. |
 | Pricing | Haiku 5.5 rates | Editable, so the estimates stay correct if prices change. |
+| Wider-web search | **Off** | Optional and gated (see [Research](#research-the-library-and-the-speaking-tube)). At most 2 a day by default (5 max), about $0.01 each. |
 
 Before every request, Kimi checks a worst-case estimate (full input plus
 `max_tokens` of output) against the remaining budget, so a single request
@@ -205,8 +214,9 @@ characters (Marigold the hedgehog, Professor Quill the owl, Ink the cat),
 and discovery tables.
 
 **Actions** (`kimi/actions/`): `move_to`, `visit_location`, `eat`, `sleep`,
-`rest`, `explore`, `observe`, `read_note`, `research`, `write_diary`,
-`create_art`, `reflect`, `leave_message`, `share_creation`, `continue`. Each
+`rest`, `explore`, `examine`, `observe`, `read_note`, `research`,
+`write_diary`, `create_art`, `reflect`, `leave_message`, `share_creation`,
+`continue`. Each
 action has a schema, input validation, a handler, a result, effects on the
 world, and a memory record where relevant.
 
@@ -215,21 +225,101 @@ world, and a memory record where relevant.
 vocabulary (sun, tree, owl, lantern…) and Python renders them as SVG, so
 the model never writes markup itself.
 
-**Research** (`kimi/actions/research.py`). This uses Wikipedia's free public
-API with no extra keys. It makes HTTPS GET requests only, to an allow-list
-of hosts, one request at a time and at most one per second, with a
-descriptive User-Agent (you can add contact details in Settings). Small
-responses are parsed as JSON and nothing downloaded is ever executed. If
-Wikipedia says "slow down" (HTTP 429), research pauses for at least 30
-minutes. Research sessions are limited per day (6 by default), and Kimi
-decides when a subject is worth looking up. Haiku then interprets the
-findings in Kimi's voice, the result becomes a memory, and it can grow
-Kimi's interests. Wikipedia's `robots.txt` governs web crawlers; API
-clients follow Wikimedia's API etiquette, which this module does.
+**Research** is described in its own section below.
 
 **Diary** (`kimi/diary.py`). Kimi writes personal entries when it feels
 like it, plus an evening reflection. Entries are stored in SQLite and
 mirrored to `data/diary/day-NNNN.md`.
+
+---
+
+## Research: the Library and the speaking-tube
+
+When Kimi is curious it walks to the Library and picks a **shelf**. Every
+shelf is a free, public, read-only API that needs no account and no key, so
+Library research costs nothing beyond the small Haiku call that turns what
+Kimi read into its own words.
+
+| Shelf (in Bramblewick) | Source | Good for |
+|---|---|---|
+| Professor Quill's encyclopedia | Wikipedia | most subjects (the default) |
+| The gentle children's encyclopedia | Simple English Wikipedia | simple explanations |
+| The great dictionary | Wiktionary | words and where they come from |
+| The nature field guide | iNaturalist | plants, animals, insects, fungi |
+| The star atlas | NASA Image and Video Library | stars, planets, space |
+| The art folio | Art Institute of Chicago | paintings and artworks |
+| The book catalogue | Open Library | books written about a subject |
+
+If a shelf has nothing (or is busy), Kimi falls back to the encyclopedias.
+The research module (`kimi/actions/research.py`) only makes HTTPS GET
+requests to those seven hosts, refuses redirects that leave them, sends a
+descriptive User-Agent (you can add contact details in Settings), makes one
+request at a time and at most one per second, accepts only small JSON
+responses, reduces any HTML to plain text and never executes anything it
+downloads. If a site answers "slow down" (HTTP 429), Kimi leaves that site
+alone for at least 30 minutes. Research is limited per day (6 by default).
+Extracts are treated as untrusted text in Kimi's prompts.
+
+### The speaking-tube (wider-web search): off by default
+
+The Library also has a brass speaking-tube that can search the wider web,
+using Anthropic's server-side web search tool through the same API key. It
+is **off unless you tick "Let Kimi search the wider web" in Settings →
+Features**, and even then Kimi may only use it when **all** of these hold:
+
+1. Library research is allowed right now (enabled, within today's limit,
+   not straight after another session).
+2. The subject is one of Kimi's **strong interests** (strength 0.5 or more).
+3. Kimi has **already read about it on the trusted shelves**.
+4. Fewer than **2 wider-web searches today** (adjustable, never more than 5).
+5. At least **3 hours** since the last one.
+6. Today's spending plus the search's worst-case cost stays **under half of
+   the daily budget**.
+
+Each use is a single search (`max_uses: 1`) that skips social media and
+forums. If any condition fails, or the search goes wrong, Kimi simply reads
+Professor Quill's encyclopedia instead; it's never an error. Results are
+treated as untrusted, Kimi writes what it learned in its own words, and the
+source links are saved with the memory (`research_log.citations`).
+
+**Cost:** Anthropic charges $10 per 1,000 searches (about **$0.01 each**),
+plus the search results Haiku reads, which are billed as input tokens (a
+fraction of a cent at Haiku 5.5 rates). The budget guard includes both in
+its worst-case check before the request is sent, and the usage log counts
+web searches separately.
+
+---
+
+## Curiosities
+
+Bramblewick is full of **63 curiosities**, from the Tiny Green Door in the
+Nest oak's roots, the Acorn Chimes and the Moss Armchair, to the Wishing
+Well, the Seven Stones, the Stopped Clock (always 4:17), the Statue of
+Bramble the Badger, the Teapot Mailbox, the Ink Puddle that never dries,
+Professor Quill's telescope, Sir Ribble the frog on his lily-pad throne, the
+Little Lighthouse that blinks a code, the Windmill on Hollow Hill, a message
+in a bottle and a forgotten picnic. The catalogue is in
+`kimi/world/curiosities.py`.
+
+- **Kimi knows what they all are.** The whole catalogue (id, name, where it
+  is and what it is) is part of Kimi's fixed system prompt, which is served
+  from the prompt cache, so knowing them costs almost nothing. Each decision
+  also lists the curiosities near Kimi, what it noticed last time, and a few
+  it hasn't examined yet.
+- **`examine`.** Kimi can choose to go and look closely at one. Each visit
+  uncovers the next of three details (the tiny door's knob is warm, as if
+  someone just let go of it…), becomes a memory, nudges Kimi's interests and
+  counts towards the goal *Visit every curiosity in Bramblewick*. While
+  exploring, Kimi sometimes spots one it hasn't looked at yet, and between
+  AI decisions it wanders over to nearby curiosities by habit, which costs
+  nothing.
+- **In 3D** every curiosity has its own little low-poly model. Kimi stands in
+  front of the one it's examining, and the camera looks over its shoulder.
+  For faraway ones on the hills or the shore, Kimi **flies**. Names appear
+  near Kimi (gold once examined), and you can click one to look at it.
+- **On the map** they're small diamonds that turn gold once Kimi has
+  examined them, and the **Character** screen shows how many Kimi has found
+  and what it noticed most recently.
 
 ---
 
@@ -238,12 +328,13 @@ mirrored to `data/diary/day-NNNN.md`.
 The **World** screen opens on a real-time 3D Bramblewick, a small low-poly
 island town that Kimi walks around in:
 
-- **Kimi in 3D.** A round slate-blue wren with a peach chest and a cocked
-  tail. It hops along the paths and turns to face where it's going. It pecks
+- **Kimi in 3D.** A small, round slate-blue wren with a peach chest and a
+  cocked tail, sized like a wren among the townsfolk. It hops along the paths and turns to face where it's going. It pecks
   when eating or poking around the Shrub, cranes its head to look around
   when observing, nods over books at the Library, flaps at the Print Shop
   easel, and tucks in at the Nest to sleep with a little "z z Z". When it's
-  exploring or pottering, it wanders around the place on its own.
+  exploring or pottering, it wanders around the place on its own, and it
+  flies to curiosities that are far from the paths.
 - **A living town.** The Nest oak, the berry-covered Shrub, the Shrine with
   its notice board (each unread visitor note appears as a paper pinned to
   it), the Town Square fountain, Marigold's Cafe with a smoking chimney and
@@ -261,8 +352,8 @@ island town that Kimi walks around in:
   - **Follow Kimi** (the default) keeps Kimi in view. It frames each place
     from its plaza side and swings in behind Kimi when it walks.
   - **Whole town** gives a slowly turning overview.
-  - **Drag** to look around, **scroll** to zoom, and **click a place name**
-    to fly there. **Double-click** to go back to following Kimi.
+  - **Drag** to look around, **scroll** to zoom, and **click a place or
+    curiosity name** to fly there. **Double-click** to go back to following Kimi.
   - Keyboard users can tab through the place names and camera buttons.
 - **Settings → Appearance** lets you choose *3D world* or the *Illustrated
   map*, set *3D quality* (High has shadows and smooth edges; Low is faster
@@ -331,7 +422,7 @@ These are hard restrictions in Python, not just instructions to the model:
 | No financial transactions, purchases or payment credentials | No capability exists for them; requests for them are rejected. |
 | No external communication or publishing without approval | Kimi can only create an outbox draft. *Approve* opens an email draft in your own mail program, or pushes to GitHub (optional, see below). |
 | No untrusted files executed | The inbox reads text, verifies images, and moves everything else aside unopened. |
-| Network limited | Anthropic API via the SDK; research is HTTPS GET to `en.wikipedia.org` only, and redirects off that host are refused. |
+| Network limited | Anthropic API via the SDK; Library research is HTTPS GET to seven trusted public APIs only (`safety.TRUSTED_HOSTS`), and redirects off them are refused. Wider-web search happens only on Anthropic's side, only when you've enabled it and every gate passes. |
 | Secrets protected | Key only in Credential Manager; never in prompts, files or logs; output redaction. |
 | Files only in Kimi's folders | `safety.safe_child_path` guards every write. |
 | No changes to Windows or its security settings | Kimi never touches the registry, firewall or system settings, and needs no admin rights. |
@@ -429,12 +520,13 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-There are 141 tests. They cover API authentication, invalid keys, successful
+There are 168 tests. They cover API authentication, invalid keys, successful
 structured responses, retries and backoff, budget and size limits, memory
 creation, retrieval and consolidation, world movement, needs, day/night,
 visitor note detection and processing, untrusted files and prompt
 injection, action validation and safety, creative output, research access
-rules, the diary, shutdown, crash recovery, the autonomous loop, pause,
+rules for every Library shelf, every wider-web gate and its cost
+accounting, the curiosity catalogue, placement and `examine`, the diary, shutdown, crash recovery, the autonomous loop, pause,
 emergency stop and budget behaviour, the end-to-end demo, and UI smoke
 tests. For the 3D world they cover the layout, mesh validity, camera
 corridors, scene state, the QML scene loading cleanly and the fallback to
@@ -454,6 +546,7 @@ kimi/
   ai/        claude_client.py (SDK, retries, budget, usage) · costs.py · prompts.py · decision_engine.py · mock.py
   memory/    database.py · short_term.py · long_term.py · retrieval.py · consolidation.py
   world/     world.py · locations.py · needs.py · environment.py · discoveries.py
+             curiosities.py (the 63 curiosities) · curio3d.py (their placement and models)
              layout3d.py (3D positions, paths, poses, sky) · mesh3d.py (procedural low-poly town)
   actions/   handler.py · validators.py · creative.py · research.py · sharing.py
   visitors/  inbox.py · board.py
@@ -485,8 +578,12 @@ accident.
   `python main.py --demo --live` is a quick live check.
 - **Only lives while running.** Time in Bramblewick passes only while Kimi
   is running; it doesn't simulate the hours your PC was off.
-- **Wikipedia may rate-limit** busy shared networks. Kimi then pauses
-  research for a while and carries on with everything else.
+- **Public APIs may rate-limit** busy shared networks. Kimi then rests that
+  shelf for a while and carries on with everything else.
+- **Wider-web search is untested live.** It follows Anthropic's published
+  web search tool format and is covered by mocked tests, but it hasn't been
+  run against the real API yet. Your organisation may need to allow web
+  search in the Anthropic Console.
 - **Email is a draft, not a send.** Approving an email share opens your mail
   program; Kimi has no email credentials by design.
 - **Costs are estimates** based on editable prices; the Anthropic Console is
@@ -494,7 +591,8 @@ accident.
 - **Drawings are simple** procedural SVG compositions chosen by Kimi, not
   generated images.
 - **The 3D world is a view of the simulation.** Kimi's world still has seven
-  places; the cottages, woods and pond are scenery. When Kimi wanders around
+  places; the cottages, woods and pond are scenery (the curiosities are
+  real, though). When Kimi wanders around
   a place, it doesn't collide with scenery and may poke into a bush.
 - **3D needs a graphics card** that supports Direct3D 11 (or OpenGL on other
   systems). Without one, Kimi shows the illustrated map instead.

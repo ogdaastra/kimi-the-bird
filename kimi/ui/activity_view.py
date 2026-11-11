@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import time
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QMessageBox,
     QTreeWidget,
     QTreeWidgetItem,

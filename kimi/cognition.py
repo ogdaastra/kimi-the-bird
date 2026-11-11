@@ -25,11 +25,13 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
-from .actions.research import ResearchUnavailable
+from .actions.research import SHELVES, ResearchUnavailable
 from .actions.validators import ActionRejected, ValidatedAction, ValidationContext, validate_decision
 from .ai.claude_client import AIError
-from .ai.prompts import DecisionContext
+from .ai.prompts import WIDER_WORLD, DecisionContext
 from .safety import sanitize_name, sanitize_untrusted
+from .world.curio3d import curiosity_spots
+from .world.curiosities import CURIOSITIES
 from .world.locations import HOME
 from .world.world import PlanStep
 
@@ -177,6 +179,13 @@ class CognitiveLoop:
             options.append(({"action": "visit_location", "destination": dest, "duration_minutes": 30}, 1.2))
         if n.hunger > 55:
             options.append(({"action": "eat"}, 2.0 + n.hunger / 30.0))
+        # Local habit: go and look at a curiosity here, preferring ones Kimi hasn't examined yet.
+        spots = curiosity_spots()
+        nearby = [c.id for c in CURIOSITIES if spots[c.id]["zone"] == here]
+        if nearby:
+            seen = rt.curiosity_visits()
+            fresh = [cid for cid in nearby if cid not in seen] or nearby
+            options.append(({"action": "examine", "curiosity_id": rt.rng.choice(fresh)}, 0.6 + n.curiosity / 60.0))
         raws, weights = zip(*options)
         raw = rt.rng.choices(raws, weights=weights, k=1)[0]
         try:
@@ -199,7 +208,33 @@ class CognitiveLoop:
             research_allowed=allowed,
             research_block_reason=reason,
             sharing_enabled=rt.settings.get().external_sharing_enabled,
+            web_check=rt.web_research_status,
+            curiosity_zones={cid: sp["zone"] for cid, sp in curiosity_spots().items()},
         )
+
+    def curiosity_lines(self, here: str, limit_here: int = 8, limit_elsewhere: int = 4) -> list[str]:
+        """Curiosities near Kimi (with what it has noticed) and a few it hasn't examined yet."""
+        rt = self.rt
+        g = rt.world.graph
+        spots = curiosity_spots()
+        visits = rt.curiosity_visits()
+        seen = len(visits)
+        lines = [f"Kimi has examined {seen} of {len(CURIOSITIES)} curiosities."]
+        nearby = [c for c in CURIOSITIES if spots[c.id]["zone"] == here]
+        for c in nearby[:limit_here]:
+            v = visits.get(c.id)
+            if v:
+                note = f"examined {v['visits']} time{'s' if v['visits'] != 1 else ''}; last noticed: {v['last_detail']}"
+            else:
+                note = "not examined yet"
+            lines.append(f"[{c.id}] {c.name} (here): {note}")
+        unseen = [c for c in CURIOSITIES if c.id not in visits and spots[c.id]["zone"] != here]
+        if unseen:
+            start = (rt.world.env.day * 7) % len(unseen)
+            picks = (unseen[start:] + unseen[:start])[:limit_elsewhere]
+            lines.append("Not examined yet elsewhere: " + "; ".join(
+                f"[{c.id}] {c.name} (near {g.name(spots[c.id]['zone'])})" for c in picks) + ".")
+        return lines
 
     def build_context(self) -> DecisionContext:
         rt = self.rt
@@ -262,6 +297,15 @@ class CognitiveLoop:
         s = rt.settings.get()
         left = max(0, s.research_daily_limit - rt.research_done_today())
         limits = f"Research sessions left today: {left}" + ("" if allowed else f" (not now: {reason})") + "."
+        shelves = ", ".join(SHELVES)
+        limits += f" Library shelves: {shelves}."
+        web_ok, web_why = rt.web_research_status()
+        if web_ok:
+            limits += (f" The speaking-tube (research_source wider_world) is available today, "
+                       f"{max(0, s.web_search_daily_limit - rt.web_searches_today())} use(s) left, only for a strong "
+                       "interest Kimi has already read about on the shelves.")
+        else:
+            limits += f" The speaking-tube is not available ({web_why})."
         if s.external_sharing_enabled:
             recent = rt.studio.list(5)
             listing = ", ".join(f"#{c.id} {c.title}" for c in recent) or "none yet"
@@ -283,6 +327,7 @@ class CognitiveLoop:
             visitors_known=known,
             unread_notes=unread,
             recent_actions=list(self.recent_actions),
+            curiosities=self.curiosity_lines(here),
             limits=limits,
             query_text=query,
         )
@@ -307,20 +352,39 @@ class CognitiveLoop:
             return DecisionOutcome(raw=raw, action=None, rejected=exc.reason)
         payload: dict = {}
         if va.action == "research":
-            topic = va.params["topic"]
-            try:
-                findings = rt.researcher.investigate(topic)
-                payload["findings"] = asdict(findings)
-                try:
-                    payload["interpretation"] = rt.engine.interpret_research(
-                        topic, findings.title, sanitize_untrusted(findings.extract, 1500), findings.url, ctx.developing_self
-                    )
-                except AIError as exc:
-                    log.info("Research interpretation unavailable: %s", exc.message)
-                    payload["interpretation"] = None
-            except ResearchUnavailable as exc:
-                payload["error"] = str(exc)
+            payload = self._research_job(va, ctx)
         return DecisionOutcome(raw=raw, action=va, payload=payload)
+
+    def _research_job(self, va: ValidatedAction, ctx: DecisionContext) -> dict:
+        """Worker thread: read the chosen shelf, or (if every gate passed) ask the speaking-tube."""
+        rt = self.rt
+        topic = va.params["topic"]
+        payload: dict = {}
+        if va.params.get("source") == WIDER_WORLD:
+            prior = rt._shelf_research_on(topic) or {}
+            try:
+                payload["web"] = rt.engine.web_research(
+                    topic, sanitize_untrusted(prior.get("takeaway") or prior.get("title") or topic, 600),
+                    ctx.developing_self)
+                return payload
+            except AIError as exc:
+                log.info("Speaking-tube unavailable (%s); reading the encyclopedia instead", exc.message)
+                va.params["source"] = "encyclopedia"
+                va.params["web_declined"] = exc.message
+        shelf = va.params.get("source") or "encyclopedia"
+        try:
+            findings = rt.researcher.investigate(topic, shelf)
+            payload["findings"] = asdict(findings)
+            try:
+                payload["interpretation"] = rt.engine.interpret_research(
+                    topic, findings.title, sanitize_untrusted(findings.extract, 1500), findings.url,
+                    ctx.developing_self, findings.shelf_name)
+            except AIError as exc:
+                log.info("Research interpretation unavailable: %s", exc.message)
+                payload["interpretation"] = None
+        except ResearchUnavailable as exc:
+            payload["error"] = str(exc)
+        return payload
 
     def _schedule_next(self, quiet: bool) -> None:
         s = self.rt.settings.get()

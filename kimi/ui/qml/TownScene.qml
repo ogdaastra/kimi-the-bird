@@ -36,6 +36,11 @@ Node {
         materials: painted
     }
     Model {
+        geometry: TownMesh { meshName: "curiosities" }
+        pickable: true
+        materials: painted
+    }
+    Model {
         geometry: TownMesh { meshName: "glow" }
         materials: PrincipledMaterial {
             baseColor: Qt.rgba(0.80 + 0.2 * town.st.night, 0.88 - 0.06 * town.st.night, 0.92 - 0.45 * town.st.night, 1)

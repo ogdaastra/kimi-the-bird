@@ -16,16 +16,15 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import asdict
 from typing import Any, Callable
 
 from . import credentials
 from .actions.creative import CreativeStudio
 from .actions.handler import ActionHandler
-from .actions.research import WikipediaResearcher
+from .actions.research import LibraryResearcher
 from .actions.sharing import Outbox, ProjectsRepo, mailto_url, valid_github_remote
-from .ai.claude_client import AIError, ClaudeClient
-from .ai.costs import UsageLedger, local_day
+from .ai.claude_client import ClaudeClient
+from .ai.costs import UsageLedger, local_day, worst_case_cost
 from .ai.decision_engine import DecisionEngine
 from .character import CharacterSheet
 from .cognition import CognitiveLoop
@@ -36,6 +35,7 @@ from .memory.database import Database
 from .memory.long_term import LongTermMemory
 from .memory.retrieval import MemoryRetriever
 from .memory.short_term import ShortTermMemory
+from .memory.text import keywords
 from .safety import safe_child_path, sanitize_output
 from .visitors.board import MessageBoard, VisitorRegistry
 from .visitors.inbox import VisitorInbox
@@ -124,7 +124,7 @@ class KimiRuntime:
         self.inbox = VisitorInbox(paths, self.db, self.visitors, wall)
         self.outbox = Outbox(self.db, wall)
         self.projects = ProjectsRepo(paths.projects, paths.creations)
-        self.researcher = researcher or WikipediaResearcher(self.settings)
+        self.researcher = researcher or LibraryResearcher(self.settings)
 
         self.ledger = UsageLedger(self.db, self.settings, wall)
         self.client = ClaudeClient(key_provider or credentials.load_api_key, self.ledger, self.settings,
@@ -361,6 +361,84 @@ class KimiRuntime:
         if last and self.wall() - float(last) < 15 * 60:
             return False, "Kimi researched something very recently and wants to digest it first"
         return True, ""
+
+    # Wider-web search (Anthropic web search): opt-in and gated. Every condition must hold;
+    # otherwise Kimi simply reads the Library's trusted shelves instead.
+    WEB_MIN_GAP_S = 3 * 3600
+    WEB_INTEREST_STRENGTH = 0.5
+    WEB_BUDGET_SHARE = 0.5
+
+    def web_searches_today(self) -> int:
+        return int(self.db.scalar("SELECT COUNT(*) FROM research_log WHERE day=? AND source='wider_world'",
+                                  (self.today(),), 0))
+
+    def _shelf_research_on(self, topic: str) -> dict | None:
+        """The latest successful shelf research sharing a keyword with ``topic``."""
+        want = set(keywords(topic))
+        if not want:
+            return None
+        for row in self.db.query(
+            "SELECT topic, title, takeaway FROM research_log WHERE source != 'wider_world' AND title IS NOT NULL "
+            "ORDER BY id DESC LIMIT 200"
+        ):
+            have = set(keywords(f"{row['topic']} {row['title']}"))
+            if want & have:
+                return dict(row)
+        return None
+
+    def _strong_interest_in(self, topic: str) -> bool:
+        want = set(keywords(topic))
+        for name, strength in self.character.top_interests(14):
+            if strength >= self.WEB_INTEREST_STRENGTH and want & set(keywords(name)):
+                return True
+        return False
+
+    def web_research_status(self, topic: str | None = None) -> tuple[bool, str]:
+        """Whether Kimi may use the speaking-tube (wider-web search) now, and if not, why.
+
+        Conditions (all required): enabled in Settings; Library research itself allowed;
+        fewer than ``web_search_daily_limit`` web searches today; at least three hours since the
+        last one; spending so far plus this search's worst case stays within half the daily
+        budget; and, for a topic, Kimi has already researched it on the trusted shelves and it is
+        one of Kimi's strong interests (strength 0.5 or more).
+        """
+        s = self.settings.get()
+        if not s.web_search_enabled:
+            return False, "the speaking-tube is switched off in Settings"
+        ok, why = self.research_status()
+        if not ok:
+            return False, why
+        if s.web_search_daily_limit <= 0 or self.web_searches_today() >= s.web_search_daily_limit:
+            return False, "the speaking-tube has been used enough today"
+        last = self.db.scalar("SELECT MAX(created_at) FROM research_log WHERE source='wider_world'", (), None)
+        if last and self.wall() - float(last) < self.WEB_MIN_GAP_S:
+            return False, "the speaking-tube needs a few hours' rest between uses"
+        worst = worst_case_cost(s.max_input_tokens, s.research_max_tokens, s, "1h", max_searches=1,
+                                search_tokens=25_000)
+        if self.ledger.spent_today() + worst > s.daily_budget_usd * self.WEB_BUDGET_SHARE:
+            return False, "it would use too much of today's budget"
+        if topic is not None:
+            if self._shelf_research_on(topic) is None:
+                return False, "Kimi should read about it on the Library's shelves first"
+            if not self._strong_interest_in(topic):
+                return False, "it isn't one of Kimi's strong interests yet"
+        return True, ""
+
+    # -- curiosities -------------------------------------------------------------------
+    def curiosity_visits(self) -> dict[str, dict]:
+        return {r["curiosity"]: dict(r) for r in self.db.query("SELECT * FROM curiosity_visits")}
+
+    def record_curiosity_visit(self, cid: str, detail: str) -> int:
+        """Count a visit and return its number (1 for the first)."""
+        now = self.wall()
+        row = self.db.query_one("SELECT visits FROM curiosity_visits WHERE curiosity=?", (cid,))
+        if row is None:
+            self.db.execute("INSERT INTO curiosity_visits(curiosity, first_seen, last_seen, first_day, visits, last_detail) "
+                            "VALUES(?,?,?,?,1,?)", (cid, now, now, self.world.env.day, detail))
+            return 1
+        self.db.execute("UPDATE curiosity_visits SET visits=visits+1, last_seen=?, last_detail=? WHERE curiosity=?",
+                        (now, detail, cid))
+        return int(row["visits"]) + 1
 
     # -- consolidation ---------------------------------------------------------------
     def on_sleep_started(self) -> None:
@@ -606,6 +684,7 @@ class KimiRuntime:
                 "location": w.location or w.destination,
                 "travel": travel,
                 "action": w.activity.step.action if w.activity else None,
+                "curiosity": w.activity.step.params.get("curiosity") if w.activity else None,
                 "asleep": w.asleep,
                 "hour": w.env.hour,
                 "weather": w.env.weather,
@@ -636,6 +715,8 @@ class KimiRuntime:
                 "temperature": env.temperature,
                 "location": w.location,
                 "place_name": w.place_name,
+                "curiosities_seen": [r["curiosity"] for r in self.db.query("SELECT curiosity FROM curiosity_visits")],
+                "curiosity": w.activity.step.params.get("curiosity") if w.activity else None,
                 "activity": w.activity_label(),
                 "activity_progress": w.activity.progress if w.activity else None,
                 "travel": travel,

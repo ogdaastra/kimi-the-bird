@@ -7,11 +7,12 @@ decisions still come from the runtime.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Property, QObject, Signal
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from ...world import layout3d
+from ...world.curio3d import curiosity_layout, curiosity_spots
 from ...world.environment import WEATHER_LABELS
-from ...world.mesh3d import pond_centre
+from ...world.mesh3d import height, pond_centre
 
 
 def build_layout() -> dict:
@@ -28,7 +29,19 @@ def build_layout() -> dict:
         "pond": {"x": px, "z": pz},
         "shrub": {"x": layout3d.PLACES["shrub"].x, "z": layout3d.PLACES["shrub"].z},
         "islandRadius": layout3d.ISLAND_RADIUS,
+        "curiosities": curiosity_layout(),
+        "beacons": _beacons(),
     }
+
+
+def _beacons() -> list[dict]:
+    """Lights that blink in the 3D scene (the little lighthouse's lamp)."""
+    out = []
+    spot = curiosity_spots().get("little_lighthouse")
+    if spot:
+        out.append({"x": spot["x"], "y": spot["y"] + spot["size"] * 3.6 + 1.6 + spot["size"] * 0.17, "z": spot["z"],
+                    "pattern": "long-short-short-long"})
+    return out
 
 
 def compute_state(pose: dict, snap: dict | None, prefs: dict, previous: dict | None = None) -> dict:
@@ -48,6 +61,7 @@ def compute_state(pose: dict, snap: dict | None, prefs: dict, previous: dict | N
         "mode": target["mode"],
         "asleep": bool(pose.get("asleep")),
         "location": pose.get("location") or "",
+        "curiosity": target.get("curiosity") or "",
         "hour": hour,
         "weather": weather,
         "weatherLabel": WEATHER_LABELS.get(weather, weather),
@@ -74,6 +88,7 @@ def compute_state(pose: dict, snap: dict | None, prefs: dict, previous: dict | N
     state["thoughtSerial"] = serial
     state["primed"] = primed or bool(snap)
     state["placeName"] = snap.get("place_name", (previous or {}).get("placeName", ""))
+    state["curiositiesSeen"] = list(snap.get("curiosities_seen", (previous or {}).get("curiositiesSeen", [])) or [])
     state["activity"] = snap.get("activity", (previous or {}).get("activity", ""))
     return state
 
@@ -94,6 +109,11 @@ class World3DBridge(QObject):
 
     state = Property("QVariantMap", _get_state, notify=stateChanged)
     layout = Property("QVariantMap", _get_layout, constant=True)
+
+    @Slot(float, float, result=float)
+    def groundHeight(self, x: float, z: float) -> float:  # noqa: N802 - Qt naming
+        """Terrain height under (x, z), so Kimi hops over hills instead of through them."""
+        return max(layout3d.WATER_LEVEL + 1.0, height(x, z))
 
     def update(self, pose: dict, snap: dict | None, prefs: dict) -> None:
         self._state = compute_state(pose, snap, prefs, self._state)

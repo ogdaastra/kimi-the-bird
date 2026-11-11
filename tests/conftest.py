@@ -65,13 +65,19 @@ class FakeResearcher:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
         self.topics: list[str] = []
+        self.shelves: list[str] = []
 
-    def investigate(self, topic: str) -> Findings:
+    def investigate(self, topic: str, shelf: str = "encyclopedia") -> Findings:
         self.topics.append(topic)
+        self.shelves.append(shelf)
         if self.fail:
             raise ResearchUnavailable("the books were all checked out")
         return Findings(topic=topic, title=topic.title(), url=f"https://en.wikipedia.org/wiki/{topic}",
-                        extract=f"{topic.title()} is a fascinating subject with a long and interesting history.")
+                        extract=f"{topic.title()} is a fascinating subject with a long and interesting history.",
+                        source=shelf)
+
+    def cooldown_remaining(self, shelf: str | None = None) -> float:
+        return 0.0
 
 
 class FakeClock:

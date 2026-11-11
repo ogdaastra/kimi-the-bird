@@ -12,9 +12,13 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from ..safety import check_action_name
+from ..safety import check_action_name, sanitize_output
 from ..world import discoveries
+from ..world.curiosities import BY_ID as CURIOSITIES
+from ..world.curiosities import CURIOSITIES as ALL_CURIOSITIES
+from ..world.curiosities import detail_for
 from ..world.locations import HOME
+from .research import SHELVES
 from ..world.world import Activity, PlanStep
 from .validators import ValidatedAction
 
@@ -44,6 +48,7 @@ LABELS = {
     "share_creation": "preparing something to share",
     "continue": "carrying on",
     "visit_location": "spending time here",
+    "examine": "looking closely at a curiosity",
     "linger": "pottering about",
 }
 
@@ -53,6 +58,8 @@ RARITY_EFFECT = {
     "rare": (0.80, 0.70, 0.90, 15),
 }
 
+
+CURIOSITY_GOAL = "Visit every curiosity in Bramblewick"
 
 # Local-only activities the model can never request (validators reject them).
 INTERNAL_ACTIONS = ("linger",)
@@ -144,6 +151,12 @@ class ActionHandler:
         label = LABELS.get(step.action, step.action).format_map(_Blank(params))
         if step.action == "explore" and params.get("topic"):
             label = f"exploring, hoping to find {params['topic']}"
+        if step.action == "examine" and params.get("curiosity") in CURIOSITIES:
+            label = f"looking closely at {CURIOSITIES[params['curiosity']].name}"
+        if step.action == "research" and params.get("source") == "wider_world":
+            label = f"asking the speaking-tube about {params.get('topic', 'something')}"
+        elif step.action == "research" and params.get("source") in SHELVES and params.get("source") != "encyclopedia":
+            label = f"reading about {params.get('topic', 'something')} in {SHELVES[params['source']]}"
         world.begin_activity(step, duration, label)
         if step.action not in ("continue", "linger"):
             self.rt.add_event("activity", f"Kimi starts {label} at {world.graph.name(here)}.")
@@ -222,6 +235,9 @@ class ActionHandler:
         find = discoveries.roll_discovery(loc, rt.rng, rt.world.needs.curiosity, a.step.params.get("topic"))
         if loc == "shrub":
             rt.character.progress_goal("Shrub")
+        noticed = self._notice_curiosity(loc)
+        if find is None and noticed:
+            return noticed
         if find is None:
             seen = discoveries.observe(loc, rt.world.env.is_night, rt.rng)
             self._mem(f"Explored {self._place(a)} but found nothing special. {seen}", "observation",
@@ -239,6 +255,56 @@ class ActionHandler:
         rt.character.record_location_feeling(loc, 0.02 if find.rarity == "common" else 0.05)
         rt.add_event("discovery", f"Kimi found {find.description}!", importance=importance)
         return f"Found {find.item} ({find.rarity})."
+
+    def _notice_curiosity(self, loc: str) -> str | None:
+        """While exploring, Kimi sometimes spots a curiosity it hasn't looked at closely yet."""
+        from ..world.curio3d import curiosity_spots
+
+        rt = self.rt
+        visits = rt.curiosity_visits()
+        spots = curiosity_spots()
+        unseen = [c for c in ALL_CURIOSITIES if spots[c.id]["zone"] == loc and c.id not in visits]
+        if not unseen or rt.rng.random() > 0.5:
+            return None
+        c = rt.rng.choice(unseen)
+        self._mem(f"Spotted {c.name} near {rt.world.graph.name(loc)}: {c.what}. I'd like to look at it properly.",
+                  "discovery", importance=0.35, valence=0.4, intensity=0.2)
+        rt.add_event("discovery", f"Kimi spots {c.name} and makes a note to look closer.", importance=0.3)
+        rt.world.needs.adjust(curiosity=4, happiness=2)
+        return f"Spotted {c.name}."
+
+    def _finish_examine(self, a: Activity) -> str:
+        rt = self.rt
+        cid = a.step.params.get("curiosity")
+        c = CURIOSITIES.get(cid)
+        if c is None:
+            return "Nothing there."
+        before = int(rt.curiosity_visits().get(cid, {}).get("visits", 0))
+        n = before + 1
+        detail = detail_for(c, n)
+        rt.record_curiosity_visit(cid, detail)
+        place = self._place(a)
+        day = rt.world.env.day
+        first, last_secret = n == 1, n == len(c.details)
+        if first:
+            self._mem(f"Looked closely at {c.name} near {place} for the first time: {c.what}. {detail}", "curiosity",
+                      importance=0.55, valence=0.55, intensity=0.4)
+            rt.add_event("discovery", f"Kimi examines {c.name} for the first time. {detail}", importance=0.55)
+            rt.world.needs.adjust(curiosity=-10, happiness=6)
+            rt.character.nudge_interest(c.tags[0], 0.05, "curiosity", day)
+            rt.character.ensure_goal(CURIOSITY_GOAL, len(ALL_CURIOSITIES), day)
+            goal = rt.character.progress_goal("every curiosity")
+            if goal and goal.get("status") == "completed":
+                rt.add_event("growth", "Kimi has looked closely at every curiosity in Bramblewick!", importance=0.9)
+        else:
+            weight = 0.45 if last_secret else 0.35 if n <= len(c.details) else 0.2
+            self._mem(f"Went back to {c.name} near {place}. {detail}", "curiosity",
+                      importance=weight, valence=0.45, intensity=0.25)
+            rt.add_event("discovery", f"Kimi visits {c.name} again. {detail}", importance=0.6 if last_secret else 0.3)
+            rt.world.needs.adjust(curiosity=-6, happiness=4 if n <= len(c.details) else 2)
+        rt.character.record_location_feeling(a.location, 0.01)
+        rt.character.save()
+        return f"Examined {c.name} (visit {n})."
 
     def _finish_observe(self, a: Activity) -> str:
         rt = self.rt
@@ -285,6 +351,8 @@ class ActionHandler:
         payload = a.step.payload
         findings = payload.get("findings")
         interp = payload.get("interpretation")
+        if payload.get("web"):
+            return self._finish_web_research(a, topic, payload["web"])
         if not findings:
             why = payload.get("error") or "the books were no help"
             self._mem(f"Tried to research {topic} at the Library, but {why}.", "research", importance=0.2, valence=-0.1)
@@ -295,11 +363,15 @@ class ActionHandler:
         importance = {"low": 0.35, "medium": 0.55, "high": 0.75}.get((interp or {}).get("importance"), 0.5)
         feeling = (interp or {}).get("feeling", "intrigued")
         valence = {"delighted": 0.8, "moved": 0.6, "intrigued": 0.5, "puzzled": 0.0, "unimpressed": -0.2}.get(feeling, 0.4)
+        shelf = findings.get("source") or "encyclopedia"
+        shelf_name = SHELVES.get(shelf, "the encyclopedia")
         rt.db.execute(
-            "INSERT INTO research_log(created_at, day, topic, title, source_url, summary, takeaway) VALUES(?,?,?,?,?,?,?)",
-            (rt.wall(), rt.today(), topic, findings["title"], findings["url"], findings["extract"][:1500], takeaway),
+            "INSERT INTO research_log(created_at, day, topic, title, source_url, summary, takeaway, source) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (rt.wall(), rt.today(), topic, findings["title"], findings["url"], findings["extract"][:1500], takeaway,
+             shelf),
         )
-        self._mem(f"Researched {topic} at the Library ({findings['title']}): {takeaway}", "research",
+        self._mem(f"Researched {topic} in {shelf_name} at the Library ({findings['title']}): {takeaway}", "research",
                   importance=importance, valence=valence, intensity=0.3 + 0.4 * (importance > 0.6))
         day = rt.world.env.day
         rt.character.nudge_interest(topic, 0.12, "research", day)
@@ -309,6 +381,28 @@ class ActionHandler:
         rt.world.needs.adjust(curiosity=-15, happiness=5)
         rt.add_event("discovery", f"Kimi learned about {findings['title']}: {takeaway[:140]}", importance=importance)
         return f"Researched {topic}."
+
+    def _finish_web_research(self, a: Activity, topic: str, web: dict) -> str:
+        """Record what the speaking-tube (wider-web search) found. The text is untrusted-derived."""
+        rt = self.rt
+        text = sanitize_output(web.get("text") or "", 900)
+        citations = [c for c in (web.get("citations") or []) if str(c.get("url", "")).startswith("https://")][:6]
+        first = citations[0] if citations else {}
+        rt.db.execute(
+            "INSERT INTO research_log(created_at, day, topic, title, source_url, summary, takeaway, source, citations) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (rt.wall(), rt.today(), topic, sanitize_output(first.get("title") or "the wider world", 160),
+             first.get("url"), text, text, "wider_world", json.dumps(citations)[:4000]),
+        )
+        where = f" (from {sanitize_output(first.get('title'), 80)})" if first.get("title") else ""
+        self._mem(f"Asked the Library's speaking-tube about {topic}{where}: {text}", "research",
+                  importance=0.75, valence=0.6, intensity=0.6)
+        day = rt.world.env.day
+        rt.character.nudge_interest(topic, 0.1, "research", day)
+        rt.world.needs.adjust(curiosity=-20, happiness=6)
+        rt.add_event("discovery", f"Kimi used the speaking-tube to learn more about {topic}: {text[:140]}",
+                     importance=0.6)
+        return f"Researched {topic} in the wider world."
 
     def _finish_write_diary(self, a: Activity) -> str:
         rt = self.rt
