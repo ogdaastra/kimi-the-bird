@@ -1,0 +1,6 @@
+# Kimi runtime dependencies (all free and open source)
+anthropic>=2.8,<3      # Official Anthropic Python SDK (Claude Haiku 5.5)
+PySide6>=6.8,<7        # Desktop interface (LGPL)
+keyring>=25,<26        # Windows Credential Manager access
+requests>=2.32,<3      # Research module HTTP client
+Pillow>=11             # Safe validation/downscaling of visitor images

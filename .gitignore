@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Kimi runtime data (memories, diary, visitor notes, creations, logs).
+# Never commit: it contains private memories and visitor messages.
+data/*
+!data/.gitkeep
+
+# Secrets must never be committed. Kimi stores its API key in
+# Windows Credential Manager, never in files, but guard anyway.
+.env
+*.key
+secrets*
+credentials*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
