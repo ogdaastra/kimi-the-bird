@@ -69,6 +69,7 @@ class CognitiveLoop:
         self.events_since_decision = 0
         self.decisions_made = 0
         self.recent_actions: deque[str] = deque(maxlen=6)
+        self._last_error_note: tuple[str, float] = ("", -1e9)
         for row in reversed(rt.db.query(
             "SELECT action FROM action_log WHERE source IN ('mind','instinct','fallback') "
             "AND status IN ('completed','started') ORDER BY id DESC LIMIT 6"
@@ -429,14 +430,12 @@ class CognitiveLoop:
         if exc is not None:
             if isinstance(exc, AIError):
                 rt.handler.log_action("decide", {}, "mind", "failed", reason=exc.message)
-                if exc.kind == "budget":
-                    rt.add_event("system", "Today's AI budget is used up. Kimi carries on by instinct until tomorrow.", importance=0.3)
-                elif exc.kind != "stopped":
-                    rt.add_event("system", f"Kimi couldn't gather its thoughts ({exc.message}). It carries on by instinct.")
+                self._note_ai_error(exc)
             else:
                 log.error("Decision job crashed", exc_info=exc)
                 rt.handler.log_action("decide", {}, "mind", "failed", reason=f"{type(exc).__name__}")
-            self._schedule_next(quiet=False)
+            # A refused request won't fix itself: back off instead of retrying every few minutes.
+            self._schedule_next(quiet=isinstance(exc, AIError) and exc.kind in ("schema", "bad_request"))
             if self.autonomy_ok():
                 self._fallback("AI unavailable")
             return
@@ -459,6 +458,25 @@ class CognitiveLoop:
         quiet = va.action in ("rest", "continue", "observe") and self.events_since_decision == 0
         self._schedule_next(quiet)
         self._enqueue(rt.handler.build_plan(va, "mind", outcome.payload))
+
+    def _note_ai_error(self, exc: AIError) -> None:
+        """Tell the human once (not every few minutes) when Kimi can't reach its mind."""
+        rt = self.rt
+        if exc.kind == "stopped":
+            return
+        now = rt.mono()
+        key = "refused" if exc.kind in ("schema", "bad_request") else exc.message
+        if key == self._last_error_note[0] and now - self._last_error_note[1] < 3600:
+            return
+        self._last_error_note = (key, now)
+        if exc.kind == "budget":
+            rt.add_event("system", "Today's AI budget is used up. Kimi carries on by instinct until tomorrow.", importance=0.3)
+        elif exc.kind in ("schema", "bad_request"):
+            rt.add_event("system", "Kimi's requests to Claude are being refused because of a problem in this version of "
+                                   f"Kimi, not your key or budget ({exc.message}). Kimi carries on by instinct; "
+                                   "please update Kimi (git pull) or tell Claude.", importance=0.75)
+        else:
+            rt.add_event("system", f"Kimi couldn't gather its thoughts ({exc.message}). It carries on by instinct.")
 
     def _apply_extras(self, extras: dict) -> None:
         rt = self.rt

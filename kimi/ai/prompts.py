@@ -94,29 +94,9 @@ def _nullable(schema: dict) -> dict:
     return {"anyOf": [schema, {"type": "null"}]}
 
 
-# Anthropic's structured outputs accept at most 16 union-typed (nullable) parameters per
-# schema. Free-text fields are therefore plain strings, left empty ("") when they don't
-# apply; only enums and numbers stay nullable. tests/test_prompts_schema.py guards this.
-MAX_UNION_PARAMS = 16
-
-
-def union_param_count(schema: dict) -> int:
-    """How many parameters in a schema use anyOf or a list of types (Anthropic's limit is 16)."""
-    count = 0
-
-    def walk(node):
-        nonlocal count
-        if isinstance(node, dict):
-            if "anyOf" in node or isinstance(node.get("type"), list):
-                count += 1
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(schema.get("properties", {}))
-    return count
+# Anthropic limits structured-output schemas (see kimi/ai/schema_rules.py). Free-text
+# fields are therefore plain strings left empty ("") when unused; only enums and numbers
+# stay nullable. tests/test_schema_rules.py keeps every schema inside the limits.
 
 
 def decision_schema() -> dict:
@@ -144,9 +124,7 @@ def decision_schema() -> dict:
         "opinion_subject": text,
         "opinion": text,
     }
-    schema = {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
-    assert union_param_count(schema) <= MAX_UNION_PARAMS, "decision schema has too many nullable fields"
-    return schema
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
 def research_schema() -> dict:

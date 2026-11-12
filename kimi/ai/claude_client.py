@@ -19,6 +19,7 @@ from typing import Any, Callable, NamedTuple
 
 from .. import MODEL_DISPLAY_NAME, MODEL_ID
 from ..config import SettingsStore
+from .schema_rules import schema_problems
 from .costs import BudgetExceeded, TokenUsage, UsageLedger, cost_of, estimate_tokens, next_local_midnight, worst_case_cost
 
 log = logging.getLogger("kimi.ai")
@@ -155,6 +156,15 @@ def _text_of(response: Any) -> str:
     return "".join(parts)
 
 
+def schema_fingerprint(schema: dict) -> str:
+    return hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _is_schema_error(message: str) -> bool:
+    m = message.lower()
+    return any(w in m for w in ("schema", "grammar", "compil", "union type", "optional parameter", "output_config"))
+
+
 def verify_api_key(api_key: str, sdk_factory: SDKFactory | None = None, ledger: UsageLedger | None = None) -> KeyTestResult:
     """Send one minimal request to check that ``api_key`` works with Haiku 5.5."""
     from ..credentials import key_format_problem, normalise_key
@@ -226,6 +236,8 @@ class ClaudeClient:
         self._failure_streak = 0
         self._cooldown_until = 0.0
         self._budget_paused_until = 0.0
+        # Reply shapes Anthropic refused (fingerprint -> reason): never sent again this session.
+        self._refused_schemas: dict[str, str] = {}
         self.last_error: AIError | None = None
         self._refresh_key_status()
 
@@ -304,6 +316,25 @@ class ClaudeClient:
                 return False, "Waiting before reconnecting to Anthropic."
         return True, ""
 
+    def check_schema(self, name: str, schema: dict) -> tuple[bool | None, str]:
+        """Ask Anthropic, as cheaply as possible, whether it accepts a reply shape.
+
+        Returns (True, "") if accepted, (False, reason) if refused, (None, reason) if the
+        check couldn't be made (no key, offline, budget). Costs a tiny request
+        (a few dozen output tokens at most); Kimi runs it once after each update.
+        """
+        try:
+            self.complete(purpose="schema_check", system="Schema check for Kimi. Reply with a short valid object.",
+                          user_content=f"Check: {name}", max_tokens=16, effort="low", schema=schema,
+                          thinking="disabled")
+        except AIError as exc:
+            if exc.kind == "invalid_response":     # cut off at 16 tokens: the shape itself was accepted
+                return True, ""
+            if exc.kind in ("schema", "bad_request"):
+                return False, exc.message
+            return None, exc.message
+        return True, ""
+
     # -- requests ---------------------------------------------------------
     def _wait(self, seconds: float) -> bool:
         """Sleep, returning True if an emergency stop happened meanwhile."""
@@ -355,6 +386,18 @@ class ClaudeClient:
                 raise AIError("auth", "The stored API key was rejected. Replace it in Settings.")
             if self._mono() < self._cooldown_until:
                 raise AIError("connection", "Waiting before reconnecting to Anthropic.", retryable=True)
+
+        # Reply-shape guard: Anthropic's published schema rules, checked before anything is sent.
+        if schema is not None:
+            problems = schema_problems([schema])
+            if problems:
+                err = AIError("schema", "This version of Kimi asks Claude for a reply shape Anthropic doesn't "
+                                        f"accept ({problems[0]}). Please update Kimi.")
+                self.last_error = err
+                raise err
+            refused = self._refused_schemas.get(schema_fingerprint(schema))
+            if refused:
+                raise AIError("schema", refused)
 
         # Request size guard.
         user_text = user_content if isinstance(user_content, str) else json.dumps(
@@ -420,6 +463,10 @@ class ClaudeClient:
                 self.ledger.record(purpose, MODEL_ID, None, 0.0, False, err.kind,
                                    int((self._mono() - started) * 1000))
                 log.warning("API %s failed (attempt %d/%d): %s", purpose, attempt + 1, attempts, err.message)
+                if err.kind == "bad_request" and schema is not None and _is_schema_error(err.message):
+                    self._refused_schemas[schema_fingerprint(schema)] = (
+                        "Anthropic refused the reply shape this version of Kimi uses: "
+                        f"{err.message[-200:]}")
                 if err.kind == "auth":
                     with self._lock:
                         self._bad_key_hash = key_hash

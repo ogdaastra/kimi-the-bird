@@ -138,9 +138,25 @@ def _extras(d: RawDecision) -> dict:
     }
 
 
+# Structured outputs don't guarantee the capitalisation of enum values, and all of Kimi's
+# enum values are lower case, so these fields are normalised before validation.
+_ENUM_FIELDS = ("action", "destination", "research_source", "curiosity_id", "request_kind", "art_kind", "mood")
+
+
+def _normalise(raw: dict) -> dict:
+    out = dict(raw)
+    for key in _ENUM_FIELDS:
+        if isinstance(out.get(key), str):
+            out[key] = out[key].strip().lower()
+    if isinstance(out.get("drawing_elements"), list):
+        out["drawing_elements"] = [e.strip().lower() if isinstance(e, str) else e for e in out["drawing_elements"]]
+    return out
+
+
 def validate_decision(raw: dict, ctx: ValidationContext) -> ValidatedAction:
     if not isinstance(raw, dict):
         raise ActionRejected("Decision was not a JSON object")
+    raw = _normalise(raw)
     try:
         check_action_name(raw.get("action"))
     except SafetyViolation as exc:

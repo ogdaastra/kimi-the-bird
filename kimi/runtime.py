@@ -100,6 +100,7 @@ class KimiRuntime:
         wall: Callable[[], float] = time.time,
         mono: Callable[[], float] = time.monotonic,
         client_sleep: Callable[[float], None] | None = None,
+        schema_self_check: bool = True,
     ) -> None:
         self.paths = paths.ensure()
         self.wall = wall
@@ -149,6 +150,9 @@ class KimiRuntime:
         self._last_tick = self.mono()
         self._last_inbox_scan = -1e9
         self._last_request_check = -1e9
+        self._schema_check_enabled = schema_self_check
+        self._schema_check_started = False
+        self._schema_check_retry_at = 0.0
         self.web = None                # the optional web page server (kimi.web.server)
         self.web_error = ""
         self._last_save = self.mono()
@@ -298,6 +302,7 @@ class KimiRuntime:
             if now - self._last_inbox_scan >= s.inbox_poll_s:
                 self._last_inbox_scan = now
                 self.scan_inbox()
+            self.maybe_check_schemas()
             if now - self._last_request_check >= 60:
                 self._last_request_check = now
                 self.expire_requests()
@@ -458,6 +463,68 @@ class KimiRuntime:
             if not self._strong_interest_in(topic):
                 return False, "it isn't one of Kimi's strong interests yet"
         return True, ""
+
+    # -- reply-shape self-check ------------------------------------------------------------
+    # After every update, Kimi asks Anthropic once (a tiny request per reply shape) whether it
+    # accepts the shapes this version uses. Local checks cover Anthropic's published limits; this
+    # also catches anything unpublished, and explains the problem clearly instead of failing quietly.
+    SCHEMA_CHECK_KEY = "schema_check"
+
+    @staticmethod
+    def reply_shapes() -> dict[str, dict]:
+        from .ai.prompts import decision_schema, image_schema, reflection_schema, research_schema
+
+        return {"decisions": decision_schema(), "research notes": research_schema(),
+                "evening reflections": reflection_schema(), "picture descriptions": image_schema()}
+
+    def reply_shapes_fingerprint(self) -> str:
+        import hashlib
+        import json as _json
+
+        from . import MODEL_ID
+
+        blob = _json.dumps({"model": MODEL_ID, "shapes": self.reply_shapes()}, sort_keys=True)
+        return hashlib.sha256(blob.encode()).hexdigest()[:20]
+
+    def maybe_check_schemas(self) -> None:
+        if not self._schema_check_enabled or self._schema_check_started or self.mono() < self._schema_check_retry_at:
+            return
+        fp = self.reply_shapes_fingerprint()
+        stored = self.db.kv_get(self.SCHEMA_CHECK_KEY) or {}
+        if stored.get("fingerprint") == fp and stored.get("ok"):
+            self._schema_check_started = True
+            return
+        if not self.cognition.autonomy_ok() or not self.client.availability()[0]:
+            return
+        self._schema_check_started = True
+        self.submit_job(self._check_schemas_job, fp, on_done=self._on_schema_check)
+
+    def _check_schemas_job(self, fp: str) -> tuple[str, dict]:
+        return fp, {name: self.client.check_schema(name, shape) for name, shape in self.reply_shapes().items()}
+
+    def _on_schema_check(self, fut: Future) -> None:
+        exc = fut.exception()
+        if exc is not None:
+            log.warning("Reply-shape self-check failed to run: %s", exc)
+            self._schema_check_started = False
+            self._schema_check_retry_at = self.mono() + 600
+            return
+        fp, results = fut.result()
+        refused = {name: why for name, (ok, why) in results.items() if ok is False}
+        if refused:
+            self.db.kv_set(self.SCHEMA_CHECK_KEY, {"fingerprint": fp, "ok": False, "refused": refused})
+            names = ", ".join(refused)
+            first = next(iter(refused.values()))
+            self.add_event("system", f"Heads up: after this update, Anthropic refuses the reply shape Kimi uses for "
+                                     f"{names}. Kimi carries on by instinct for those until it's fixed. Please update "
+                                     f"Kimi or tell Claude: {first}", importance=0.8)
+            log.error("Reply-shape self-check: refused %s", refused)
+        elif any(ok is None for ok, _ in results.values()):
+            self._schema_check_started = False          # couldn't check (offline, budget): try again later
+            self._schema_check_retry_at = self.mono() + 600
+        else:
+            self.db.kv_set(self.SCHEMA_CHECK_KEY, {"fingerprint": fp, "ok": True})
+            log.info("Reply-shape self-check passed")
 
     # -- asking the human ----------------------------------------------------------------
     def ask_status(self) -> tuple[bool, str]:

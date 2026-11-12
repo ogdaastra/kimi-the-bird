@@ -567,7 +567,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-There are 200 tests. They cover API authentication, invalid keys, successful
+There are 216 tests. They cover API authentication, invalid keys, successful
 structured responses, retries and backoff, budget and size limits, memory
 creation, retrieval and consolidation, world movement, needs, day/night,
 visitor note detection and processing, untrusted files and prompt
@@ -658,6 +658,17 @@ accident.
   Anthropic account.
 - **Header says Disconnected**: Kimi can't reach the API. It retries on its
   own with a growing cooldown and lives on instinct meanwhile.
+- **"Kimi's requests to Claude are being refused because of a problem in
+  this version of Kimi"**: this isn't your key or your budget. Update with
+  `git pull` (or bring the message to Claude). Kimi says so once, keeps
+  living on instinct and tries again less often. Refused requests aren't
+  charged.
+- **How Kimi avoids that**: every reply shape Kimi asks Haiku for is checked
+  against Anthropic's published limits three times: by the tests, by the
+  offline mock (which refuses bad shapes just like the real API), and by the
+  client before anything is sent. After each update Kimi also asks Anthropic
+  once, with a tiny request per shape (well under a cent in total), whether
+  it accepts them, and tells you clearly if not.
 - **Kimi seems quiet**: it may be asleep (night), paused, at its daily
   budget, or in a long adaptive-idle gap. The *Kimi's thoughts* card says
   which.

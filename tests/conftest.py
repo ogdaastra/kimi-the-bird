@@ -98,7 +98,7 @@ def make_runtime(paths):
     created = []
 
     def factory(responder=None, *, key: str | None = TEST_KEY, researcher=None, path_override: Paths | None = None,
-                **settings):
+                schema_self_check: bool = False, **settings):
         responder = responder or ScriptedHaiku()
         rt = KimiRuntime(
             path_override or paths,
@@ -108,6 +108,7 @@ def make_runtime(paths):
             seed=42,
             inline_jobs=True,
             client_sleep=lambda s: None,
+            schema_self_check=schema_self_check,
         )
         defaults = {"decision_min_interval_s": 60, "decision_max_interval_s": 600, "min_request_gap_s": 0.5}
         defaults.update(settings)

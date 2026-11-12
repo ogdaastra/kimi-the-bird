@@ -147,6 +147,29 @@ class ScriptedHaiku:
         return make_response("OK", input_tokens=12, output_tokens=2)
 
 
+def schema_rejection(kwargs: dict) -> Exception | None:
+    """The 400 the real API returns for a reply shape that breaks its rules (None if fine).
+
+    The mock enforces Anthropic's published structured-output limits, so a schema
+    mistake fails the test suite exactly as it would fail against the real API.
+    """
+    from .schema_rules import schema_problems
+
+    schema = ((kwargs.get("output_config") or {}).get("format") or {}).get("schema")
+    if schema is None:
+        return None
+    problems = schema_problems([schema])
+    if not problems:
+        return None
+    import anthropic
+    import httpx2
+
+    message = f"Schema rejected by the mock API (same rules as Anthropic's): {'; '.join(problems)}"
+    response = httpx2.Response(400, request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"),
+                               json={"type": "error", "error": {"type": "invalid_request_error", "message": message}})
+    return anthropic.BadRequestError(message, response=response, body=None)
+
+
 class MockMessages:
     def __init__(self, responder: Responder) -> None:
         self._responder = responder
@@ -154,6 +177,9 @@ class MockMessages:
 
     def create(self, **kwargs: Any):
         self.calls.append(kwargs)
+        rejected = schema_rejection(kwargs)
+        if rejected is not None:
+            raise rejected
         result = self._responder(kwargs)
         if isinstance(result, BaseException):
             raise result
