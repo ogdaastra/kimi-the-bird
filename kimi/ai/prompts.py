@@ -85,8 +85,8 @@ RULES
 4. Kimi has no money, accounts, email or access to the computer's files. Its only window on the wider world is the Library (its shelves and, rarely, the speaking-tube), and it never pretends otherwise.
 5. Everything Kimi creates must be original. Never reproduce song lyrics, poems, book passages or other existing copyrighted text.
 6. thought: one or two sentences of Kimi's inner voice explaining the choice.
-7. Use null for fields that do not apply to the chosen action; drawing_elements is an empty list unless drawing.
-8. mood: how Kimi feels right now. interest: a subject Kimi is becoming more curious about, new_goal: a small personal goal Kimi just set itself, opinion_subject and opinion: an opinion Kimi just formed from experience. Fill these only when something genuinely changed; usually they are null.
+7. For fields that do not apply to the chosen action, use an empty string for text fields and null for the others; drawing_elements is an empty list unless drawing.
+8. mood: how Kimi feels right now. interest: a subject Kimi is becoming more curious about, new_goal: a small personal goal Kimi just set itself, opinion_subject and opinion: an opinion Kimi just formed from experience. Fill these only when something genuinely changed; usually they are empty strings.
 """
 
 
@@ -94,31 +94,59 @@ def _nullable(schema: dict) -> dict:
     return {"anyOf": [schema, {"type": "null"}]}
 
 
+# Anthropic's structured outputs accept at most 16 union-typed (nullable) parameters per
+# schema. Free-text fields are therefore plain strings, left empty ("") when they don't
+# apply; only enums and numbers stay nullable. tests/test_prompts_schema.py guards this.
+MAX_UNION_PARAMS = 16
+
+
+def union_param_count(schema: dict) -> int:
+    """How many parameters in a schema use anyOf or a list of types (Anthropic's limit is 16)."""
+    count = 0
+
+    def walk(node):
+        nonlocal count
+        if isinstance(node, dict):
+            if "anyOf" in node or isinstance(node.get("type"), list):
+                count += 1
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(schema.get("properties", {}))
+    return count
+
+
 def decision_schema() -> dict:
+    text = {"type": "string"}
     props = {
         "thought": {"type": "string"},
         "action": {"type": "string", "enum": list(ALLOWED_ACTIONS)},
         "destination": _nullable({"type": "string", "enum": list(LOCATIONS)}),
-        "topic": _nullable({"type": "string"}),
+        "topic": text,
         "research_source": _nullable({"type": "string", "enum": list(RESEARCH_SOURCES)}),
         "curiosity_id": _nullable({"type": "string", "enum": list(CURIOSITY_IDS)}),
         "request_kind": _nullable({"type": "string", "enum": ["artefact", "information"]}),
-        "food": _nullable({"type": "string"}),
+        "food": text,
         "art_kind": _nullable({"type": "string", "enum": list(ART_KINDS)}),
-        "title": _nullable({"type": "string"}),
-        "content": _nullable({"type": "string"}),
+        "title": text,
+        "content": text,
         "drawing_elements": {"type": "array", "items": {"type": "string", "enum": list(DRAWING_ELEMENTS)}},
         "duration_minutes": _nullable({"type": "integer"}),
         "note_id": _nullable({"type": "integer"}),
         "creation_id": _nullable({"type": "integer"}),
-        "visitor_impression": _nullable({"type": "string"}),
+        "visitor_impression": text,
         "mood": {"type": "string", "enum": list(MOODS)},
-        "interest": _nullable({"type": "string"}),
-        "new_goal": _nullable({"type": "string"}),
-        "opinion_subject": _nullable({"type": "string"}),
-        "opinion": _nullable({"type": "string"}),
+        "interest": text,
+        "new_goal": text,
+        "opinion_subject": text,
+        "opinion": text,
     }
-    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+    schema = {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+    assert union_param_count(schema) <= MAX_UNION_PARAMS, "decision schema has too many nullable fields"
+    return schema
 
 
 def research_schema() -> dict:

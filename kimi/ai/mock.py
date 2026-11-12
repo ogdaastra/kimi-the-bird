@@ -63,11 +63,11 @@ def schema_props(kwargs: dict) -> set[str]:
 
 def decision(action: str, **fields: Any) -> dict:
     base = {
-        "thought": "", "action": action, "destination": None, "topic": None, "research_source": None,
-        "curiosity_id": None, "request_kind": None, "food": None, "art_kind": None,
-        "title": None, "content": None, "drawing_elements": [], "duration_minutes": None, "note_id": None,
-        "creation_id": None, "visitor_impression": None, "mood": "content", "interest": None, "new_goal": None,
-        "opinion_subject": None, "opinion": None,
+        "thought": "", "action": action, "destination": None, "topic": "", "research_source": None,
+        "curiosity_id": None, "request_kind": None, "food": "", "art_kind": None,
+        "title": "", "content": "", "drawing_elements": [], "duration_minutes": None, "note_id": None,
+        "creation_id": None, "visitor_impression": "", "mood": "content", "interest": "", "new_goal": "",
+        "opinion_subject": "", "opinion": "",
     }
     base.update(fields)
     return base
