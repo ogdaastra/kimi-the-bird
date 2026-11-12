@@ -567,7 +567,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-There are 216 tests. They cover API authentication, invalid keys, successful
+There are 220 tests. They cover API authentication, invalid keys, successful
 structured responses, retries and backoff, budget and size limits, memory
 creation, retrieval and consolidation, world movement, needs, day/night,
 visitor note detection and processing, untrusted files and prompt

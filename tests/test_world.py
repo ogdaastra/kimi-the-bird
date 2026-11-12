@@ -90,3 +90,24 @@ def test_world_state_round_trip():
 def test_corrupted_state_falls_back_safely():
     w = World.from_dict({"location": "atlantis", "activity": {"bad": 1}, "plan": [None, 5]})
     assert w.location == "nest" and w.activity is None
+
+
+def test_every_action_counts_towards_needs():
+    from kimi.safety import ALLOWED_ACTIONS
+    from kimi.world.needs import ACTIVITY_CLASS
+
+    missing = [a for a in ALLOWED_ACTIONS if a not in ACTIVITY_CLASS]
+    assert missing == []
+
+
+def test_happiness_and_curiosity_have_soft_limits():
+    n = Needs(happiness=95, curiosity=4)
+    n.adjust(happiness=10, curiosity=-10)
+    assert 95 < n.happiness < 97 and 3 < n.curiosity < 4      # small changes near the edges
+    m = Needs(happiness=40, curiosity=60)
+    m.adjust(happiness=10, curiosity=-10)
+    assert m.happiness == 50 and m.curiosity == 50            # full changes in the middle
+    k = Needs(curiosity=0)
+    for _ in range(24):
+        k.tick(60, "idle")
+    assert k.curiosity > 30                                    # drifts back up on its own

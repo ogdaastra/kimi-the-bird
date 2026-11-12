@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import math
 import random
 import time
@@ -38,6 +40,8 @@ from . import theme
 from .widgets import Card, NeedBar, button, esc, label, paint_kimi
 
 INK = QColor("#3d3027")
+
+log = logging.getLogger("kimi.ui")
 
 EVENT_ICONS = {
     "discovery": "✦", "creation": "✎", "visitor": "✉", "diary": "❦", "thought": "❝", "travel": "➝",
@@ -741,11 +745,28 @@ class WorldPage(QWidget):
             QTimer.singleShot(2500, lambda: (self.ask_msg.setText(""), self.ask_card.hide()) if self._ask_id is None else None)
 
     def update_from(self, s: dict) -> None:
+        # Each part updates on its own, so a problem in one (say, the 3D view) can never
+        # freeze the others: Kimi's feelings, thoughts and events always stay current.
+        for part in (self._update_feelings, self._update_status, self._update_events, self._update_scene):
+            try:
+                part(s)
+            except Exception:  # noqa: BLE001
+                log.exception("World screen: %s failed", part.__name__)
+
+    def _update_feelings(self, s: dict) -> None:
+        self.mood.setText(f"Mood: <b>{s['mood']}</b>")
+        labels = s.get("need_labels") or {}
+        for key, bar in self.bars.items():
+            bar.set_value(float(s["needs"].get(key, 0.0)), labels.get(key, ""))
+
+    def _update_scene(self, s: dict) -> None:
         self.canvas.set_snapshot(s)
         self._show_request(s.get("request"))
         if self.view3d is not None and self.view3d.ok:
             self.view3d.set_preferences(s.get("graphics_quality", "high"), bool(s.get("reduce_motion")))
             self.view3d.set_snapshot(s)
+
+    def _update_status(self, s: dict) -> None:
         self.place.setText(s["place_name"] if not s.get("travel") else "On the path")
         act = s["activity"]
         self.activity.setText(act[0].upper() + act[1:] if act else "")
@@ -775,9 +796,8 @@ class WorldPage(QWidget):
                 "budget_paused": "Today's AI budget is used up; Kimi carries on by instinct.",
                 "needs_key": "No API key - Kimi lives on instinct until you add one in Settings.",
             }.get(s["status"], ""))
-        self.mood.setText(f"Mood: <b>{s['mood']}</b>")
-        for key, bar in self.bars.items():
-            bar.set_value(s["needs"][key], s["need_labels"][key])
+
+    def _update_events(self, s: dict) -> None:
         events = [e for e in s["events"] if e["kind"] != "thinking"]
         last_id = (events[-1]["id"], events[-1]["text"]) if events else None
         if last_id != self._last_event_id:

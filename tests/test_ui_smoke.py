@@ -114,3 +114,52 @@ def test_kimi_asks_card_and_web_settings(app, make_runtime, secure_keyring):
     assert sp.passcode_btn.text() == "Set passcode…"
     assert sp.ask_human.isChecked() and sp.ask_limit.value() == 1
     win.close()
+
+
+def test_every_number_box_in_settings_is_readable_and_editable(app, make_runtime):
+    """Regression: with the buttons hidden under the stylesheet, Qt squeezed the text field to 1 px,
+    so values were invisible and couldn't be changed."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit
+
+    from kimi.ui.settings import SettingsPage
+
+    rt = make_runtime()
+    sp = SettingsPage(rt, mock=True)
+    sp.resize(1100, 3000)
+    sp.show()
+    app.processEvents()
+    boxes = sp.findChildren(QAbstractSpinBox)
+    assert len(boxes) >= 15
+    for box in boxes:
+        field = box.findChild(QLineEdit)
+        assert field.width() > 60, f"{box.suffix() if hasattr(box, 'suffix') else box}: text field {field.width()} px"
+        assert box.buttonSymbols() != QAbstractSpinBox.ButtonSymbols.NoButtons
+    for box, typed, expected in ((sp.research_limit, "9", 9), (sp.web_limit, "4", 4), (sp.ask_limit, "2", 2)):
+        box.setFocus()
+        app.processEvents()
+        box.selectAll()
+        QTest.keyClicks(box, typed)
+        assert box.value() == expected
+        QTest.keyClick(box, Qt.Key.Key_Down)
+        assert box.value() == expected - 1
+    sp.apply()
+    s = rt.settings.get()
+    assert (s.research_daily_limit, s.web_search_daily_limit, s.ask_human_daily_limit) == (8, 3, 1)
+    sp.close()
+
+
+def test_feelings_update_even_if_another_part_of_the_screen_fails(app, make_runtime):
+    from kimi.ui.world_view import WorldPage
+
+    rt = make_runtime()
+    page = WorldPage(rt, mode="map")
+    page._update_scene = lambda s: (_ for _ in ()).throw(RuntimeError("3D hiccup"))
+    n = rt.world.needs
+    n.hunger, n.energy, n.curiosity, n.happiness, n.social = 81, 22, 63, 44, 15
+    page.update_from(rt.snapshot())
+    assert {k: round(b.value) for k, b in page.bars.items()} == \
+        {"hunger": 81, "energy": 22, "curiosity": 63, "happiness": 44, "social": 15}
+    assert page.bars["hunger"].word == "very hungry"
+    page.close()

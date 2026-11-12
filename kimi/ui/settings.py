@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -39,28 +39,56 @@ def _form() -> tuple[QWidget, QFormLayout]:
     return w, f
 
 
+class _NumberBoxMixin:
+    """Friendlier number boxes: arrows to click, the number selected when you click in so typing
+    replaces it, and the mouse wheel only changes a box you've clicked into (so scrolling the
+    Settings page never changes a value by accident)."""
+
+    def _setup(self) -> None:
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMinimumWidth(130)
+        self.setMaximumWidth(190)
+        self.setToolTip("Click the arrows, or click in and type a number")
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        QTimer.singleShot(0, self.selectAll)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class NumberBox(_NumberBoxMixin, QSpinBox):
+    def __init__(self) -> None:
+        super().__init__()
+        self._setup()
+
+
+class DecimalBox(_NumberBoxMixin, QDoubleSpinBox):
+    def __init__(self) -> None:
+        super().__init__()
+        self._setup()
+
+
 def _spin(lo: int, hi: int, suffix: str = "", step: int = 1) -> QSpinBox:
-    s = QSpinBox()
+    s = NumberBox()
     s.setRange(lo, hi)
     s.setSingleStep(step)
     if suffix:
         s.setSuffix(suffix)
-    s.setMaximumWidth(160)
-    s.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-    s.setToolTip("Type a value, or use the arrow keys or mouse wheel")
     return s
 
 
 def _dspin(lo: float, hi: float, decimals: int, step: float, prefix: str = "", suffix: str = "") -> QDoubleSpinBox:
-    s = QDoubleSpinBox()
+    s = DecimalBox()
     s.setRange(lo, hi)
     s.setDecimals(decimals)
     s.setSingleStep(step)
     s.setPrefix(prefix)
     s.setSuffix(suffix)
-    s.setMaximumWidth(160)
-    s.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-    s.setToolTip("Type a value, or use the arrow keys or mouse wheel")
     return s
 
 
@@ -204,9 +232,9 @@ class SettingsPage(QWidget):
         feat.add(self.web_search)
         w, f = _form()
         self.web_limit = _spin(0, 5, " per day")
-        self.web_price = _dspin(0, 1000, 2, 1.0, prefix="$ ", suffix=" per 1,000 searches")
+        self.web_price = _dspin(0, 1000, 2, 1.0, prefix="$ ")
         f.addRow("Wider-web searches", self.web_limit)
-        f.addRow("Search price (estimate)", self.web_price)
+        f.addRow("Price per 1,000 searches", self.web_price)
         feat.add(w)
         feat.add(label("Kimi only uses the speaking-tube when <b>all</b> of these hold: this box is ticked; the "
                        "subject is one of Kimi's strong interests <i>and</i> Kimi has already read about it on the "

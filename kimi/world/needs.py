@@ -44,7 +44,13 @@ ACTIVITY_CLASS = {
     "reflect": "reflective",
     "research": "study",
     "share_creation": "creative",
+    "examine": "explore",
+    "ask_human": "reflective",
 }
+
+# Happiness and curiosity have soft limits: a boost does less the higher the value already is
+# (and a drain less the lower it is), so they move around the middle instead of sitting at 0 or 100.
+SOFT = ("happiness", "curiosity")
 
 
 def _clamp(v: float) -> float:
@@ -64,7 +70,8 @@ class Needs:
         h = minutes / 60.0
         self.hunger = _clamp(self.hunger + _HUNGER.get(activity_class, 5.0) * h)
         self.energy = _clamp(self.energy + _ENERGY.get(activity_class, -2.0) * h)
-        self.curiosity = _clamp(self.curiosity + _CURIOSITY.get(activity_class, 1.0) * h)
+        curiosity_drift = (55.0 - self.curiosity) * 0.04 * h   # gently back towards a natural level
+        self.curiosity = _clamp(self.curiosity + _CURIOSITY.get(activity_class, 1.0) * h + curiosity_drift)
         social_rate = _SOCIAL.get(activity_class, 2.0)
         if with_company and activity_class not in ("sleep",):
             social_rate = min(social_rate, -4.0)
@@ -85,7 +92,11 @@ class Needs:
 
     def adjust(self, **changes: float) -> None:
         for name, delta in changes.items():
-            setattr(self, name, _clamp(getattr(self, name) + delta))
+            value = getattr(self, name)
+            if name in SOFT:
+                room = (100.0 - value) if delta > 0 else value
+                delta *= min(1.0, room / 50.0)
+            setattr(self, name, _clamp(value + delta))
 
     def labels(self) -> dict[str, str]:
         def band(v: float, words: tuple[str, str, str, str, str]) -> str:

@@ -9,6 +9,7 @@ Windows display scale.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
@@ -108,8 +109,12 @@ def resolve(mode: str) -> Tokens:
     return LANTERN_NIGHT if system_prefers_dark() else DAYLIGHT
 
 
+ICONS = Path(__file__).resolve().parent / "icons"
+
+
 def stylesheet(t: Tokens) -> str:
     body, cap, h2 = TYPE["body"], TYPE["caption"], TYPE["h2"]
+    up, down = (ICONS / "spin-up.svg").as_posix(), (ICONS / "spin-down.svg").as_posix()
     return f"""
     QWidget {{ color: {t.ink}; }}
     QMainWindow, QDialog, #Page {{ background: {t.window}; }}
@@ -148,6 +153,19 @@ def stylesheet(t: Tokens) -> str:
         selection-background-color: {t.accent}; selection-color: {t.text_on_accent}; }}
     QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
         border: 2px solid {t.accent}; }}
+    /* Number boxes: styled up/down arrows. (Hiding the buttons under a stylesheet makes Qt
+       squeeze the text field to 1 pixel wide, so the value becomes invisible.) */
+    QSpinBox, QDoubleSpinBox {{ padding-right: 24px; }}
+    QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {{
+        subcontrol-origin: border; width: 20px; border: none; background: transparent; margin-right: 2px; }}
+    QSpinBox::up-button, QDoubleSpinBox::up-button {{ subcontrol-position: top right; margin-top: 2px; }}
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{ subcontrol-position: bottom right; margin-bottom: 2px; }}
+    QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover,
+    QDoubleSpinBox::down-button:hover {{ background: {t.accent_soft}; border-radius: 4px; }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url("{up}"); width: 10px; height: 6px; }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url("{down}"); width: 10px; height: 6px; }}
+    QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled,
+    QDoubleSpinBox::down-arrow:disabled {{ image: none; }}
     QComboBox QAbstractItemView {{ background: {t.surface}; color: {t.ink}; selection-background-color: {t.accent_soft}; selection-color: {t.ink}; }}
     QCheckBox {{ spacing: 8px; }}
     QCheckBox:focus {{ color: {t.accent}; }}

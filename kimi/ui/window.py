@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -32,6 +34,8 @@ from .world_view import WorldPage
 
 PAGES = ("World", "Kimi", "Memories", "Diary", "Creations", "Visitors", "Activity", "Settings")
 
+
+log = logging.getLogger("kimi.ui")
 
 class MainWindow(QMainWindow):
     def __init__(self, runtime, *, mock: bool = False) -> None:
@@ -145,7 +149,10 @@ class MainWindow(QMainWindow):
     def _refresh(self) -> None:
         try:
             s = self.rt.snapshot()
-        except Exception:  # noqa: BLE001 - database closed during shutdown
+        except Exception:  # noqa: BLE001 - e.g. the database closing during shutdown
+            if not self.rt.closed and self._ticks % 60 == 0:
+                log.exception("Couldn't read Kimi's state for the screen")
+            self._ticks += 1
             return
         self._ticks += 1
         weather = WEATHER_LABELS.get(s["weather"], s["weather"])
