@@ -199,6 +199,7 @@ class CognitiveLoop:
         rt = self.rt
         w = rt.world
         allowed, reason = rt.research_status()
+        ask_ok, ask_why = rt.ask_status()
         return ValidationContext(
             graph=w.graph,
             current_location=w.location or w.destination or HOME,
@@ -209,8 +210,29 @@ class CognitiveLoop:
             research_block_reason=reason,
             sharing_enabled=rt.settings.get().external_sharing_enabled,
             web_check=rt.web_research_status,
+            ask_allowed=ask_ok,
+            ask_block_reason=ask_why,
             curiosity_zones={cid: sp["zone"] for cid, sp in curiosity_spots().items()},
         )
+
+    def request_lines(self) -> list[str]:
+        """Kimi's open request to the human and recent replies (replies are untrusted text)."""
+        rt = self.rt
+        lines = []
+        req = rt.requests.open_request()
+        if req:
+            lines.append(f"Waiting for the human to reply to your {req['kind']} request: {req['title']}.")
+        for r in rt.requests.resolved_since(rt.wall() - 7 * 24 * 3600, limit=3):
+            if r["status"] == "answered":
+                lines.append(f'The human answered your question about {r["title"]}: '
+                             f'<human_reply>{sanitize_untrusted(r["reply"] or "", 600)}</human_reply>')
+            elif r["status"] == "wishlisted":
+                lines.append(f"The human put your wish for {r['title']} on the wishlist.")
+            elif r["status"] == "declined":
+                lines.append(f"The human said not now to your request about {r['title']}.")
+            elif r["status"] == "expired":
+                lines.append(f"Your request about {r['title']} went unanswered.")
+        return lines
 
     def curiosity_lines(self, here: str, limit_here: int = 8, limit_elsewhere: int = 4) -> list[str]:
         """Curiosities near Kimi (with what it has noticed) and a few it hasn't examined yet."""
@@ -306,6 +328,9 @@ class CognitiveLoop:
                        "interest Kimi has already read about on the shelves.")
         else:
             limits += f" The speaking-tube is not available ({web_why})."
+        ask_ok, ask_why = rt.ask_status()
+        limits += (" Asking the human (ask_human) is possible today, if Kimi truly wants something." if ask_ok
+                   else f" Asking the human: not now ({ask_why}).")
         if s.external_sharing_enabled:
             recent = rt.studio.list(5)
             listing = ", ".join(f"#{c.id} {c.title}" for c in recent) or "none yet"
@@ -328,6 +353,7 @@ class CognitiveLoop:
             unread_notes=unread,
             recent_actions=list(self.recent_actions),
             curiosities=self.curiosity_lines(here),
+            requests=self.request_lines(),
             limits=limits,
             query_text=query,
         )

@@ -9,8 +9,10 @@ things, pokes at the town's **63 curiosities** (a tiny green door in the
 oak's roots, a lighthouse that blinks a secret code, a clock stuck at 4:17…),
 researches what it's curious about on the Library's trusted shelves, makes
 drawings and stories, writes a diary, and reads the notes visitors leave it.
-It does all this on its own schedule, and it doesn't need you to keep
-prompting it.
+Now and then it may ask you for something: a wish for its world, or a
+question about something it cares about. You can also watch it from your
+phone on a small private **web page**. It does all this on its own
+schedule, and it doesn't need you to keep prompting it.
 
 Kimi thinks with **Claude Haiku 5.5** (`claude-haiku-5-5`) through the
 official Anthropic Python SDK, using your own API key. Everything else, such
@@ -216,7 +218,7 @@ and discovery tables.
 **Actions** (`kimi/actions/`): `move_to`, `visit_location`, `eat`, `sleep`,
 `rest`, `explore`, `examine`, `observe`, `read_note`, `research`,
 `write_diary`, `create_art`, `reflect`, `leave_message`, `share_creation`,
-`continue`. Each
+`ask_human`, `continue`. Each
 action has a schema, input validation, a handler, a result, effects on the
 world, and a memory record where relevant.
 
@@ -323,6 +325,50 @@ in a bottle and a forgotten picnic. The catalogue is in
 
 ---
 
+## Kimi's requests and wishlist
+
+Once in a while (**once a day by default, never more than twice**), Kimi may
+ask you for something it genuinely wants:
+
+- **A wish** for something in Bramblewick, such as a swing by the pond. If you
+  click **Add to wishlist**, it goes on `data\wishlist.md`, with Kimi's own
+  words and your note. Bring that list to Claude (or whoever builds Kimi's
+  world) to have the wishes made into real objects in the town. Nothing is
+  added automatically.
+- **A question** about a topic it cares about. Your answer becomes one of its
+  memories ("the human told me…").
+
+Requests appear in a **Kimi asks…** card on the World screen and on the web
+page. **Not now** is always fine. If you don't answer, the request quietly
+expires after three days, and Kimi only ever has one request open at a time.
+Kimi can never ask for money, accounts, passwords, files or personal details:
+Python rejects any request that does. You can turn requests off or change
+how many it can make in **Settings → Features and permissions**.
+
+---
+
+## The web page (watch Kimi from your phone)
+
+![Kimi's web page on a phone](docs/screenshots/web-page-phone.png)
+
+Kimi can serve a small web page with its map, current thought, needs,
+recent events, diary, curiosities and Shrine board, and a **Kimi asks…** card
+so you can reply to its requests from your phone.
+
+- **Off by default.** Turn it on in **Settings → Web page** and set a
+  passcode. The passcode is stored in Windows Credential Manager, never in
+  Kimi's settings.
+- **This PC only.** The page listens on `127.0.0.1` and nothing else. To open
+  it from anywhere, use **Tailscale**, which is free for personal use and
+  keeps it private to your own devices:
+  `tailscale serve --bg --https=443 8765`. The step-by-step guide is in
+  [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md).
+- **Locked down.** Every data request needs the passcode. Repeated wrong
+  passcodes lock the page for a while. The page can't change settings, run
+  anything, or see your API key. It uses no extra API credits.
+
+---
+
 ## The 3D world
 
 The **World** screen opens on a real-time 3D Bramblewick, a small low-poly
@@ -422,6 +468,7 @@ These are hard restrictions in Python, not just instructions to the model:
 | No financial transactions, purchases or payment credentials | No capability exists for them; requests for them are rejected. |
 | No external communication or publishing without approval | Kimi can only create an outbox draft. *Approve* opens an email draft in your own mail program, or pushes to GitHub (optional, see below). |
 | No untrusted files executed | The inbox reads text, verifies images, and moves everything else aside unopened. |
+| Web page private | Optional, off by default; listens on `127.0.0.1` only; passcode (in Credential Manager) on every data request, with lockout; can only show Kimi and pass your replies to its requests. |
 | Network limited | Anthropic API via the SDK; Library research is HTTPS GET to seven trusted public APIs only (`safety.TRUSTED_HOSTS`), and redirects off them are refused. Wider-web search happens only on Anthropic's side, only when you've enabled it and every gate passes. |
 | Secrets protected | Key only in Credential Manager; never in prompts, files or logs; output redaction. |
 | Files only in Kimi's folders | `safety.safe_child_path` guards every write. |
@@ -520,13 +567,15 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-There are 168 tests. They cover API authentication, invalid keys, successful
+There are 194 tests. They cover API authentication, invalid keys, successful
 structured responses, retries and backoff, budget and size limits, memory
 creation, retrieval and consolidation, world movement, needs, day/night,
 visitor note detection and processing, untrusted files and prompt
 injection, action validation and safety, creative output, research access
 rules for every Library shelf, every wider-web gate and its cost
-accounting, the curiosity catalogue, placement and `examine`, the diary, shutdown, crash recovery, the autonomous loop, pause,
+accounting, the curiosity catalogue, placement and `examine`, Kimi's
+requests (limits, blocked topics, replies, the wishlist and expiry), the web
+page (passcode, lockout, local-only listening and replies), the diary, shutdown, crash recovery, the autonomous loop, pause,
 emergency stop and budget behaviour, the end-to-end demo, and UI smoke
 tests. For the 3D world they cover the layout, mesh validity, camera
 corridors, scene state, the QML scene loading cleanly and the fallback to
@@ -549,13 +598,15 @@ kimi/
              curiosities.py (the 63 curiosities) · curio3d.py (their placement and models)
              layout3d.py (3D positions, paths, poses, sky) · mesh3d.py (procedural low-poly town)
   actions/   handler.py · validators.py · creative.py · research.py · sharing.py
+  requests.py                Kimi's requests to you and the wishlist
+  web/       server.py · page.html · app.js · app.css (the optional private web page)
   visitors/  inbox.py · board.py
   ui/        app.py · window.py · setup_screen.py · world_view.py · character_view.py · memory_view.py
              diary_view.py · creations_view.py · visitors_view.py · activity_view.py · settings.py · theme.py
              world3d/ (view.py · bridge.py · geometry.py)  qml/ (World3D.qml, KimiBird.qml, town, sky, weather, overlay)
 tests/       pytest suite (mocked API)
 scripts/     install_windows.bat · start_kimi.bat · start_kimi_headless.bat · demo_visitor_note.py
-docs/        WINDOWS_STARTUP.md · screenshots/
+docs/        WINDOWS_STARTUP.md · REMOTE_ACCESS.md · screenshots/
 ```
 
 I changed the suggested layout in a few places: the API key setup lives in

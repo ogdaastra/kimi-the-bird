@@ -64,6 +64,10 @@ class Paths:
         return self.root / "projects"
 
     @property
+    def wishlist(self) -> Path:
+        return self.root / "wishlist.md"
+
+    @property
     def lock_file(self) -> Path:
         return self.root / "kimi.lock"
 
@@ -128,6 +132,9 @@ class Settings:
     # gated by extra conditions; see KimiRuntime.web_research_status.
     web_search_enabled: bool = False
     web_search_daily_limit: int = 2
+    # Asking the human for something (an artefact for the world, or information).
+    ask_human_enabled: bool = True
+    ask_human_daily_limit: int = 1
     vision_enabled: bool = True
     external_sharing_enabled: bool = False  # drafts only; sending always needs approval
     github_remote_url: str = ""
@@ -138,6 +145,10 @@ class Settings:
     reduce_motion: bool = False
     world_view: str = "3d"               # 3d | map
     graphics_quality: str = "high"       # high (shadows, antialiasing) | low
+
+    # --- Web page (view Kimi in a browser; served on this PC only) ----------
+    web_enabled: bool = False
+    web_port: int = 8765
 
 
 _RANGES: dict[str, tuple[float, float]] = {
@@ -163,6 +174,8 @@ _RANGES: dict[str, tuple[float, float]] = {
     "cache_write_1h_multiplier": (0.0, 10.0),
     "research_daily_limit": (0, 50),
     "web_search_daily_limit": (0, 5),
+    "ask_human_daily_limit": (0, 2),
+    "web_port": (1024, 65535),
     "price_web_search_per_1k": (0.0, 1000.0),
     "inbox_poll_s": (1.0, 600.0),
 }

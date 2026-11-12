@@ -16,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from ..ai.prompts import ART_KINDS, DRAWING_ELEMENTS, RESEARCH_SOURCES, WIDER_WORLD
 from ..character import MOODS
+from ..requests import KINDS as REQUEST_KINDS
+from ..requests import request_problem
 from ..world.curiosities import BY_ID as CURIOSITIES
 from ..safety import SafetyViolation, check_action_name, clean_text, sanitize_output
 from ..world.locations import ART_LOCATION, HOME, NOTE_LOCATION, RESEARCH_LOCATION, LocationGraph
@@ -40,6 +42,7 @@ class RawDecision(BaseModel):
     topic: str | None = None
     research_source: str | None = None
     curiosity_id: str | None = None
+    request_kind: str | None = None
     food: str | None = None
     art_kind: str | None = None
     title: str | None = None
@@ -78,6 +81,8 @@ class ValidationContext:
     # Wider-web gate: topic -> (allowed, reason). None means never allowed.
     web_check: Callable[[str], tuple[bool, str]] | None = None
     curiosity_zones: dict[str, str] = field(default_factory=dict)   # curiosity id -> place
+    ask_allowed: bool = False
+    ask_block_reason: str = "asking the human is not available"
 
 
 @dataclass
@@ -89,7 +94,7 @@ class ValidatedAction:
 
     def describe(self) -> str:
         bits = [self.action]
-        for key in ("destination", "food", "topic", "source", "curiosity", "art_kind", "title", "note_id"):
+        for key in ("destination", "food", "topic", "source", "curiosity", "kind", "art_kind", "title", "note_id"):
             if self.params.get(key) not in (None, ""):
                 bits.append(f"{key}={self.params[key]}")
         return " ".join(str(b) for b in bits)
@@ -289,6 +294,19 @@ def validate_decision(raw: dict, ctx: ValidationContext) -> ValidatedAction:
         if d.creation_id not in ctx.creation_ids:
             raise ActionRejected(f"Unknown creation {d.creation_id!r}")
         return ValidatedAction(a, {"creation_id": d.creation_id}, ART_LOCATION, extras)
+
+    if a == "ask_human":
+        if not ctx.ask_allowed:
+            raise ActionRejected(ctx.ask_block_reason or "Kimi can't ask the human right now")
+        kind = d.request_kind if d.request_kind in REQUEST_KINDS else None
+        if kind is None:
+            raise ActionRejected("ask_human needs request_kind artefact or information")
+        title = sanitize_output(d.title or d.topic or "", 80).strip()
+        body = sanitize_output(d.content or "", 400).strip()
+        problem = request_problem(kind, title, body)
+        if problem:
+            raise ActionRejected(problem)
+        return ValidatedAction(a, {"kind": kind, "title": title, "body": body}, None, extras)
 
     if a == "continue":
         return ValidatedAction(a, {"duration_minutes": _clamp_int(d.duration_minutes, 10, 60, 20)}, None, extras)

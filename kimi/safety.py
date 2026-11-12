@@ -44,6 +44,7 @@ ALLOWED_ACTIONS: tuple[str, ...] = (
     "reflect",
     "leave_message",
     "share_creation",
+    "ask_human",
     "continue",
 )
 

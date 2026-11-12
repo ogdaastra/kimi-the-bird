@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Kimi in Bramblewick</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="bird" aria-hidden="true"></span>
+    <div>
+      <h1>Kimi</h1>
+      <p class="sub" id="where">in Bramblewick</p>
+    </div>
+  </div>
+  <div class="meta">
+    <span class="chip" id="status">…</span>
+    <span class="when" id="when"></span>
+  </div>
+</header>
+
+<main>
+  <section class="card login" id="login" hidden>
+    <h2>Say hello to Kimi</h2>
+    <p id="login-msg">Enter the passcode you set in Kimi's Settings.</p>
+    <form id="login-form" autocomplete="off">
+      <label for="pass">Passcode</label>
+      <input id="pass" type="password" autocomplete="current-password" required minlength="8">
+      <label class="check"><input id="remember" type="checkbox"> Remember on this device</label>
+      <button type="submit">Open</button>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <section class="card ask" id="ask" hidden aria-live="polite">
+      <h2>Kimi asks…</h2>
+      <p class="ask-title" id="ask-title"></p>
+      <blockquote id="ask-body"></blockquote>
+      <label for="ask-text" id="ask-label">Your answer</label>
+      <textarea id="ask-text" rows="3" maxlength="1500"></textarea>
+      <div class="buttons">
+        <button id="ask-yes" type="button">Send answer</button>
+        <button id="ask-no" type="button" class="quiet">Not now</button>
+      </div>
+      <p class="hint" id="ask-msg"></p>
+    </section>
+
+    <section class="card map-card">
+      <canvas id="map" aria-label="Map of Bramblewick showing where Kimi is" role="img"></canvas>
+      <div class="legend"><span class="dia seen"></span> examined curiosity <span class="dia"></span> not yet</div>
+    </section>
+
+    <section class="card now">
+      <div class="thought" id="thought" hidden></div>
+      <p class="doing"><strong id="activity">…</strong></p>
+      <p class="mood" id="mood"></p>
+      <div class="needs" id="needs"></div>
+    </section>
+
+    <section class="card">
+      <h2>Lately</h2>
+      <ol class="events" id="events"></ol>
+    </section>
+
+    <section class="card">
+      <h2>From the diary</h2>
+      <div id="diary"><p class="hint">Nothing written yet.</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Curiosities</h2>
+      <p id="curio-count"></p>
+      <ul class="plain" id="curios"></ul>
+    </section>
+
+    <section class="card">
+      <h2>The Shrine board</h2>
+      <ul class="plain" id="board"></ul>
+    </section>
+
+    <footer>
+      <span id="spend"></span>
+      <button id="logout" type="button" class="link">Forget passcode</button>
+    </footer>
+  </div>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

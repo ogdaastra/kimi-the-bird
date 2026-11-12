@@ -36,6 +36,7 @@ from .memory.long_term import LongTermMemory
 from .memory.retrieval import MemoryRetriever
 from .memory.short_term import ShortTermMemory
 from .memory.text import keywords
+from .requests import ANSWERED, DECLINED, EXPIRED, WISHLISTED, HumanRequests
 from .safety import safe_child_path, sanitize_output
 from .visitors.board import MessageBoard, VisitorRegistry
 from .visitors.inbox import VisitorInbox
@@ -124,6 +125,7 @@ class KimiRuntime:
         self.inbox = VisitorInbox(paths, self.db, self.visitors, wall)
         self.outbox = Outbox(self.db, wall)
         self.projects = ProjectsRepo(paths.projects, paths.creations)
+        self.requests = HumanRequests(self.db, paths, wall)
         self.researcher = researcher or LibraryResearcher(self.settings)
 
         self.ledger = UsageLedger(self.db, self.settings, wall)
@@ -146,6 +148,9 @@ class KimiRuntime:
         self._thread: threading.Thread | None = None
         self._last_tick = self.mono()
         self._last_inbox_scan = -1e9
+        self._last_request_check = -1e9
+        self.web = None                # the optional web page server (kimi.web.server)
+        self.web_error = ""
         self._last_save = self.mono()
         self.recovered_from_crash = False
         self.closed = False
@@ -204,6 +209,33 @@ class KimiRuntime:
         self._last_tick = self.mono()
         self._thread = threading.Thread(target=self._run, name="kimi-world", daemon=True)
         self._thread.start()
+        self.apply_web_settings()
+
+    # -- web page ------------------------------------------------------------------
+    def apply_web_settings(self) -> None:
+        """Start, stop or move the web page server to match Settings."""
+        s = self.settings.get()
+        if self.web is not None and (not s.web_enabled or self.web.port != s.web_port):
+            self.web.stop()
+            self.web = None
+        if s.web_enabled and self.web is None:
+            from .web.server import KimiWebServer
+
+            server = KimiWebServer(self, s.web_port)
+            try:
+                server.start()
+            except OSError as exc:
+                self.web_error = f"Port {s.web_port} is busy or unavailable ({exc.strerror or exc})."
+                log.warning("Web page could not start: %s", self.web_error)
+                return
+            self.web = server
+            self.web_error = ""
+
+    def web_status(self) -> tuple[bool, str, str]:
+        """(running, address, problem)"""
+        if self.web is not None:
+            return True, self.web.url, ""
+        return False, "", self.web_error
 
     def _run(self) -> None:
         while not self._stop.wait(self.TICK_S):
@@ -266,6 +298,9 @@ class KimiRuntime:
             if now - self._last_inbox_scan >= s.inbox_poll_s:
                 self._last_inbox_scan = now
                 self.scan_inbox()
+            if now - self._last_request_check >= 60:
+                self._last_request_check = now
+                self.expire_requests()
             self.cognition.update()
             if now - self._last_save >= self.SAVE_EVERY_S:
                 self.save()
@@ -423,6 +458,72 @@ class KimiRuntime:
             if not self._strong_interest_in(topic):
                 return False, "it isn't one of Kimi's strong interests yet"
         return True, ""
+
+    # -- asking the human ----------------------------------------------------------------
+    def ask_status(self) -> tuple[bool, str]:
+        s = self.settings.get()
+        return self.requests.status(s.ask_human_enabled, s.ask_human_daily_limit)
+
+    def answer_request(self, rid: int, action: str, text: str = "") -> tuple[bool, str]:
+        """The human's reply to one of Kimi's requests (from the app or the web page).
+
+        information: action "answer" (with text) or "decline".
+        artefact: action "wishlist" (optional note) or "decline".
+        """
+        from .safety import clean_text, sanitize_untrusted
+
+        with self.lock:
+            req = self.requests.get(int(rid))
+            if req is None:
+                return False, "That request doesn't exist."
+            if req["status"] != "open":
+                return False, "That request has already been answered."
+            text = clean_text(text or "", 1500)
+            day = self.world.env.day
+            title = req["title"]
+            note = sanitize_untrusted(text, 1500)
+            if req["kind"] == "information" and action == "answer":
+                if len(text) < 2:
+                    return False, "Write a few words for Kimi first."
+                self.requests.resolve(req["id"], ANSWERED, text)
+                self.stm.add(f"I asked the human about {title}, and they told me: “{note}”", category="human",
+                             sim_minute=self.world.env.minute, location=self.world.location,
+                             importance=0.75, valence=0.65, intensity=0.5)
+                self.character.nudge_interest(title, 0.08, "human", day)
+                self.world.needs.adjust(happiness=8, curiosity=-10, social=-15)
+                self.add_event("human", f"You answered Kimi's question about {title}. Kimi is delighted.", importance=0.5)
+                result = "Kimi will read your answer next time it thinks."
+            elif req["kind"] == "artefact" and action == "wishlist":
+                self.requests.resolve(req["id"], WISHLISTED, text or None)
+                self.requests.write_wishlist()
+                extra = f" They said: “{note}”" if text else ""
+                self.stm.add(f"The human put my wish for {title} on the wishlist!{extra} Maybe one day it will be "
+                             "in Bramblewick.", category="human", sim_minute=self.world.env.minute,
+                             location=self.world.location, importance=0.7, valence=0.8, intensity=0.5)
+                self.world.needs.adjust(happiness=10, social=-10)
+                self.add_event("human", f"You added Kimi's wish for {title} to the wishlist.", importance=0.5)
+                result = f"Added to the wishlist ({self.paths.wishlist})."
+            elif action == "decline":
+                self.requests.resolve(req["id"], DECLINED, text or None)
+                extra = f" They said: “{note}”" if text else ""
+                self.stm.add(f"I asked the human about {title}, but they said not now.{extra} That's all right.",
+                             category="human", sim_minute=self.world.env.minute, location=self.world.location,
+                             importance=0.4, valence=-0.05, intensity=0.2)
+                self.add_event("human", f"You said not now to Kimi's request about {title}.", importance=0.3)
+                result = "Kimi has been told, kindly."
+            else:
+                return False, "That reply doesn't fit this request."
+            self.character.save()
+            self.cognition.notify_event()
+            return True, result
+
+    def expire_requests(self) -> None:
+        for req in self.requests.due_to_expire():
+            self.requests.resolve(req["id"], EXPIRED, None)
+            self.stm.add(f"The human didn't get round to my request about {req['title']}. That's all right; "
+                         "they must be busy.", category="human", sim_minute=self.world.env.minute,
+                         location=self.world.location, importance=0.3, valence=-0.05, intensity=0.1)
+            self.add_event("human", f"Kimi's request about {req['title']} quietly expired.", importance=0.2)
 
     # -- curiosities -------------------------------------------------------------------
     def curiosity_visits(self) -> dict[str, dict]:
@@ -584,6 +685,8 @@ class KimiRuntime:
         s = self.settings.update(**changes)
         if "daily_budget_usd" in changes or "max_requests_per_day" in changes:
             self.client.clear_budget_pause()
+        if ("web_enabled" in changes or "web_port" in changes) and self._thread is not None:
+            self.apply_web_settings()
         return s
 
     # -- approvals -----------------------------------------------------------------------
@@ -716,6 +819,7 @@ class KimiRuntime:
                 "location": w.location,
                 "place_name": w.place_name,
                 "curiosities_seen": [r["curiosity"] for r in self.db.query("SELECT curiosity FROM curiosity_visits")],
+                "request": self.requests.open_request(),
                 "curiosity": w.activity.step.params.get("curiosity") if w.activity else None,
                 "activity": w.activity_label(),
                 "activity_progress": w.activity.progress if w.activity else None,
@@ -756,6 +860,9 @@ class KimiRuntime:
         if self.closed:
             return
         self._stop.set()
+        if self.web is not None:
+            self.web.stop()
+            self.web = None
         if self._thread is not None:
             self._thread.join(timeout)
         self.client.halt()

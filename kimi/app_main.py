@@ -64,6 +64,11 @@ def run_headless(paths: Paths, mock: bool) -> int:
         signal.signal(signal.SIGBREAK, _handle)  # type: ignore[attr-defined]
     rt.start()
     print(f"{APP_NAME} is running headless. Press Ctrl+C to stop. Data: {paths.root}")
+    running, url, problem = rt.web_status()
+    if running:
+        print(f"Web page: {url} (this PC only; see docs/REMOTE_ACCESS.md to view it from your phone)")
+    elif problem:
+        print(f"Web page not running: {problem}")
     try:
         while not stop.wait(60):
             s = rt.snapshot()

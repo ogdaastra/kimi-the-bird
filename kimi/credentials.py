@@ -144,3 +144,68 @@ def delete_api_key() -> bool:
         raise CredentialStorageError(f"Could not delete the key: {exc}") from None
     log.info("API key deleted from secure credential storage")
     return True
+
+
+# -- web page passcode ------------------------------------------------------------------
+# The passcode that protects Kimi's web page is a secret too, so it lives in the
+# same secure store as the API key (a separate entry), never in Kimi's settings.
+
+WEB_ACCOUNT_NAME = "web-page-passcode"
+MIN_PASSCODE_LENGTH = 8
+
+
+def passcode_problem(passcode: str) -> str | None:
+    if len(passcode) < MIN_PASSCODE_LENGTH:
+        return f"Use at least {MIN_PASSCODE_LENGTH} characters."
+    if len(passcode) > 128:
+        return "That passcode is too long."
+    if any(ord(ch) < 32 for ch in passcode):
+        return "The passcode can't contain control characters."
+    return None
+
+
+def save_web_passcode(passcode: str) -> None:
+    problem = passcode_problem(passcode)
+    if problem:
+        raise ValueError(problem)
+    _require_secure()
+    import keyring
+    from keyring.errors import KeyringError
+
+    try:
+        keyring.set_password(SERVICE_NAME, WEB_ACCOUNT_NAME, passcode)
+    except KeyringError as exc:
+        raise CredentialStorageError(f"Could not save the passcode securely: {exc}") from None
+    register_secret(passcode)
+    log.info("Web page passcode saved to secure credential storage")
+
+
+def load_web_passcode() -> str | None:
+    ok, _ = secure_storage_status()
+    if not ok:
+        return None
+    import keyring
+    from keyring.errors import KeyringError
+
+    try:
+        value = keyring.get_password(SERVICE_NAME, WEB_ACCOUNT_NAME)
+    except KeyringError as exc:
+        log.warning("Could not read credential store: %s", exc)
+        return None
+    if value:
+        register_secret(value)
+    return value or None
+
+
+def delete_web_passcode() -> bool:
+    _require_secure()
+    import keyring
+    from keyring.errors import KeyringError, PasswordDeleteError
+
+    try:
+        keyring.delete_password(SERVICE_NAME, WEB_ACCOUNT_NAME)
+    except PasswordDeleteError:
+        return False
+    except KeyringError as exc:
+        raise CredentialStorageError(f"Could not delete the passcode: {exc}") from None
+    return True

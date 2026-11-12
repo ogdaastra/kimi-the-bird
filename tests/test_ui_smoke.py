@@ -91,3 +91,26 @@ def test_main_window_pages_and_controls(app, make_runtime):
     win.emergency_stop()
     assert rt.status() == "stopped" and not win.stop_btn.isEnabled()
     win.close()
+
+
+def test_kimi_asks_card_and_web_settings(app, make_runtime, secure_keyring):
+    from kimi.ui.window import MainWindow
+
+    rt = make_runtime()
+    rid = rt.requests.create("artefact", "A little swing", "Could there be a swing by the pond?", 1, "nest")
+    win = MainWindow(rt, mock=True)
+    win.show()
+    win._refresh()
+    page = win.world_page
+    assert not page.ask_card.isHidden() and page.ask_yes.text() == "Add to wishlist"
+    assert "swing by the pond" in page.ask_body.text()
+    page.ask_text.setPlainText("Yes please!")
+    page.ask_yes.click()
+    assert rt.requests.get(rid)["status"] == "wishlisted"
+    assert "A little swing" in rt.paths.wishlist.read_text(encoding="utf-8")
+    sp = win.settings_page
+    sp.refresh()
+    assert sp.web_status.text() == "Off." and not sp.open_web_btn.isEnabled()
+    assert sp.passcode_btn.text() == "Set passcode…"
+    assert sp.ask_human.isChecked() and sp.ask_limit.value() == 1
+    win.close()

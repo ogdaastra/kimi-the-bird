@@ -216,6 +216,15 @@ class SettingsPage(QWidget):
                        "$0.01, plus the result text it reads as input (a fraction of a cent with Haiku 5.5). Whatever "
                        "Kimi finds is treated as untrusted and the sources are kept in its memory.",
                        role="caption", muted=True))
+        self.ask_human = QCheckBox("Let Kimi ask me for something now and then (a wish for its world, or a question)")
+        feat.add(self.ask_human)
+        w, f = _form()
+        self.ask_limit = _spin(0, 2, " per day")
+        f.addRow("Kimi's requests", self.ask_limit)
+        feat.add(w)
+        feat.add(label("Kimi's requests appear on the World screen (and on the web page). Wishes you agree to go on "
+                       "<code>data\\wishlist.md</code>, to be built into Bramblewick later. Kimi can never ask for "
+                       "money, accounts, passwords, files or personal details.", role="caption", muted=True))
         self.vision = QCheckBox("Look at pictures visitors leave (one small request per picture)")
         feat.add(self.vision)
         self.sharing = QCheckBox("Allow Kimi to ask to share creations (each share still needs your approval)")
@@ -229,6 +238,37 @@ class SettingsPage(QWidget):
                        "Only creation files are ever published - never memories or visitor notes.",
                        role="caption", muted=True))
         lay.addWidget(feat)
+
+        # --- Web page ---------------------------------------------------------------------
+        web = Card("Web page")
+        self.web_enabled = QCheckBox("Let me see Kimi in a web browser (served on this PC only)")
+        web.add(self.web_enabled)
+        w, f = _form()
+        self.web_port = _spin(1024, 65535)
+        f.addRow("Port", self.web_port)
+        web.add(w)
+        row = QHBoxLayout()
+        self.passcode_btn = button("Set passcode…", slot=self.set_passcode)
+        self.open_web_btn = button("Open in browser", slot=self.open_web)
+        row.addWidget(self.passcode_btn)
+        row.addWidget(self.open_web_btn)
+        row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        row.setContentsMargins(0, 0, 0, 0)
+        web.add(holder)
+        self.web_status = label("")
+        web.add(self.web_status)
+        web.add(label(
+            "The page shows Kimi on the map, its thoughts, needs, diary and curiosities, and lets you reply to its "
+            "requests. It needs the passcode, which is kept in Windows Credential Manager.<br><br>"
+            "<b>To see Kimi from anywhere, free:</b> install <b>Tailscale</b> (free personal plan) on this PC and on "
+            "your phone and sign in to both with the same account. Then run this once in a terminal on this PC: "
+            "<code>tailscale serve --bg --https=443 8765</code> (use your port if you changed it). Open the address "
+            "it shows, like <code>https://your-pc.your-tailnet.ts.net</code>, on your phone. Only your own devices "
+            "can reach it; it is never on the public internet. Full steps: <code>docs\\REMOTE_ACCESS.md</code>.",
+            role="caption", muted=True))
+        lay.addWidget(web)
 
         # --- Appearance ---------------------------------------------------------------
         look = Card("Appearance")
@@ -315,6 +355,10 @@ class SettingsPage(QWidget):
         self.web_price.setValue(s.price_web_search_per_1k)
         self.vision.setChecked(s.vision_enabled)
         self.sharing.setChecked(s.external_sharing_enabled)
+        self.ask_human.setChecked(s.ask_human_enabled)
+        self.ask_limit.setValue(s.ask_human_daily_limit)
+        self.web_enabled.setChecked(s.web_enabled)
+        self.web_port.setValue(s.web_port)
         self.github.setText(s.github_remote_url)
         idx = self.theme_box.findData(s.ui_theme)
         self.theme_box.setCurrentIndex(max(0, idx))
@@ -355,6 +399,10 @@ class SettingsPage(QWidget):
             price_web_search_per_1k=self.web_price.value(),
             vision_enabled=self.vision.isChecked(),
             external_sharing_enabled=self.sharing.isChecked(),
+            ask_human_enabled=self.ask_human.isChecked(),
+            ask_human_daily_limit=self.ask_limit.value(),
+            web_enabled=self.web_enabled.isChecked(),
+            web_port=self.web_port.value(),
             github_remote_url=github,
             ui_theme=self.theme_box.currentData(),
             reduce_motion=self.reduce_motion.isChecked(),
@@ -370,9 +418,58 @@ class SettingsPage(QWidget):
         self.applied.setText("Settings saved ✓")
 
     # -- live info -----------------------------------------------------------
+    # -- web page ------------------------------------------------------------------------
+    def set_passcode(self) -> None:
+        first, ok = QInputDialog.getText(self, "Web page passcode",
+                                         "Choose a passcode for Kimi's web page (at least 8 characters):",
+                                         QLineEdit.EchoMode.Password)
+        if not ok:
+            return
+        problem = credentials.passcode_problem(first)
+        if problem:
+            QMessageBox.warning(self, "Web page passcode", problem)
+            return
+        again, ok = QInputDialog.getText(self, "Web page passcode", "Type it once more:", QLineEdit.EchoMode.Password)
+        if not ok:
+            return
+        if again != first:
+            QMessageBox.warning(self, "Web page passcode", "Those didn't match. Nothing was changed.")
+            return
+        try:
+            credentials.save_web_passcode(first)
+        except (credentials.CredentialStorageError, ValueError) as exc:
+            QMessageBox.warning(self, "Web page passcode", str(exc))
+            return
+        if self.rt.web is not None:
+            self.rt.web.refresh_passcode()
+        self.applied.setText("Web page passcode saved securely ✓")
+        self.refresh()
+
+    def open_web(self) -> None:
+        running, url, _ = self.rt.web_status()
+        if running:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _refresh_web(self) -> None:
+        t = theme.tokens()
+        running, url, problem = self.rt.web_status()
+        has_pass = credentials.load_web_passcode() is not None
+        self.passcode_btn.setText("Change passcode…" if has_pass else "Set passcode…")
+        self.open_web_btn.setEnabled(running)
+        if running and has_pass:
+            text = f"Running at <b>{esc(url)}</b> (this PC only)."
+        elif running:
+            text = f"Running at {esc(url)}, but <span style='color:{t.danger}'>no passcode is set yet</span>, so it stays locked."
+        elif problem:
+            text = f"<span style='color:{t.danger}'>Not running: {esc(problem)}</span>"
+        else:
+            text = "Off."
+        self.web_status.setText(text)
+
     def refresh(self) -> None:
         rt = self.rt
         t = theme.tokens()
+        self._refresh_web()
         ok, storage = credentials.secure_storage_status()
         if self.mock:
             key_line = "Running with the offline mock (<code>--mock-ai</code>): no API key is used and no requests are sent."

@@ -29,7 +29,7 @@ log = logging.getLogger("kimi.actions")
 
 DURATIONS = {
     "eat": 20, "read_note": 12, "research": 45, "write_diary": 25, "reflect": 15,
-    "leave_message": 10, "share_creation": 10,
+    "leave_message": 10, "share_creation": 10, "ask_human": 10,
 }
 ART_DURATIONS = {"drawing": 60, "diary_illustration": 45, "story": 50, "poem": 35, "project": 70}
 
@@ -49,6 +49,7 @@ LABELS = {
     "continue": "carrying on",
     "visit_location": "spending time here",
     "examine": "looking closely at a curiosity",
+    "ask_human": "writing a little request for the human",
     "linger": "pottering about",
 }
 
@@ -445,6 +446,21 @@ class ActionHandler:
         self._mem(f"Pinned a message on the Shrine board: “{content[:120]}”", "message", importance=0.3, valence=0.3)
         rt.add_event("visitor", f"Kimi pinned a message on the Shrine board: “{content[:120]}”", importance=0.4)
         return "Message pinned."
+
+    def _finish_ask_human(self, a: Activity) -> str:
+        rt = self.rt
+        p = a.step.params
+        ok, why = rt.ask_status()   # re-checked: settings may have changed meanwhile
+        if not ok:
+            self._mem(f"I thought about asking the human about {p['title']}, but decided not to ({why}).", "human",
+                      importance=0.15, valence=0.0)
+            return f"Didn't ask: {why}."
+        rid = rt.requests.create(p["kind"], p["title"], p["body"], rt.world.env.day, a.location)
+        what = "a wish" if p["kind"] == "artefact" else "a question"
+        self._mem(f"I sent the human {what} about {p['title']}: “{p['body']}”", "human",
+                  importance=0.5, valence=0.4, intensity=0.4)
+        rt.add_event("request", f"Kimi has {what} for you: {p['title']} - “{p['body']}”", importance=0.7)
+        return f"Request {rid} sent to the human."
 
     def _finish_share_creation(self, a: Activity) -> str:
         rt = self.rt

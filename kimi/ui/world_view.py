@@ -21,6 +21,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QPlainTextEdit,
     QProgressBar,
     QSizePolicy,
     QStackedWidget,
@@ -41,7 +42,7 @@ INK = QColor("#3d3027")
 EVENT_ICONS = {
     "discovery": "✦", "creation": "✎", "visitor": "✉", "diary": "❦", "thought": "❝", "travel": "➝",
     "weather": "☁", "time": "◷", "system": "⚙", "instinct": "♥", "growth": "❀", "memory": "❖",
-    "approval": "✓", "observation": "◦", "activity": "•", "thinking": "…",
+    "approval": "✓", "observation": "◦", "activity": "•", "thinking": "…", "request": "✿", "human": "♡",
 }
 
 
@@ -585,6 +586,37 @@ class WorldPage(QWidget):
 
         side = QVBoxLayout()
         side.setSpacing(12)
+
+        # Kimi's rare request to you (an artefact for its world, or information).
+        self.ask_card = Card("Kimi asks…")
+        self.ask_card.setObjectName("AskCard")
+        self.ask_title = label("")
+        self.ask_title.setFont(theme.font("body", weight=QFont.Weight.DemiBold))
+        self.ask_body = label("")
+        self.ask_body.setFont(theme.font("body", italic=True))
+        self.ask_body.setAccessibleName("What Kimi is asking")
+        self.ask_text = QPlainTextEdit()
+        self.ask_text.setMaximumHeight(70)
+        self.ask_text.setAccessibleName("Your reply to Kimi")
+        ask_buttons = QHBoxLayout()
+        self.ask_yes = button("Send answer", role="primary", slot=lambda: self._reply("yes"))
+        self.ask_no = button("Not now", slot=lambda: self._reply("decline"))
+        ask_buttons.addWidget(self.ask_yes)
+        ask_buttons.addWidget(self.ask_no)
+        ask_buttons.addStretch(1)
+        self.ask_msg = label("", role="caption", muted=True)
+        for w in (self.ask_title, self.ask_body, self.ask_text):
+            self.ask_card.add(w)
+        holder = QWidget()
+        holder.setLayout(ask_buttons)
+        ask_buttons.setContentsMargins(0, 0, 0, 0)
+        self.ask_card.add(holder)
+        self.ask_card.add(self.ask_msg)
+        self.ask_card.hide()
+        self._ask_id = None
+        self._ask_kind = None
+        side.addWidget(self.ask_card)
+
         now_card = Card()
         self.place = label("", heading=True, role="h1")
         self.place.setAccessibleName("Kimi's location")
@@ -677,8 +709,40 @@ class WorldPage(QWidget):
             self.btn_3d.setToolTip(self.view3d_error)
         self.view_note.setText(self.view3d_error if mode == "map" and self.view3d_error else "")
 
+    def _show_request(self, req: dict | None) -> None:
+        if not req or req.get("status") != "open":
+            if self._ask_id is not None and not self.ask_msg.text():
+                self.ask_card.hide()
+            if not req:
+                self._ask_id = None
+            return
+        if req["id"] == self._ask_id:
+            return
+        self._ask_id, self._ask_kind = req["id"], req["kind"]
+        wish = req["kind"] == "artefact"
+        self.ask_title.setText(f"A wish: {req['title']}" if wish else f"A question about {req['title']}")
+        self.ask_body.setText(f"“{req['body']}”")
+        self.ask_text.clear()
+        self.ask_text.setPlaceholderText("A note for Kimi (optional)" if wish else "Your answer")
+        self.ask_yes.setText("Add to wishlist" if wish else "Send answer")
+        self.ask_msg.setText("If you agree, it goes on Kimi's wishlist (data\\wishlist.md) to be built later."
+                             if wish else "")
+        self.ask_card.show()
+
+    def _reply(self, which: str) -> None:
+        if self.rt is None or self._ask_id is None:
+            return
+        action = "decline" if which == "decline" else ("wishlist" if self._ask_kind == "artefact" else "answer")
+        ok, message = self.rt.answer_request(self._ask_id, action, self.ask_text.toPlainText())
+        self.ask_msg.setText(message)
+        if ok:
+            self._ask_id = None
+            self.ask_text.clear()
+            QTimer.singleShot(2500, lambda: (self.ask_msg.setText(""), self.ask_card.hide()) if self._ask_id is None else None)
+
     def update_from(self, s: dict) -> None:
         self.canvas.set_snapshot(s)
+        self._show_request(s.get("request"))
         if self.view3d is not None and self.view3d.ok:
             self.view3d.set_preferences(s.get("graphics_quality", "high"), bool(s.get("reduce_motion")))
             self.view3d.set_snapshot(s)

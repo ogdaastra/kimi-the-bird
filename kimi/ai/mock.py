@@ -64,7 +64,7 @@ def schema_props(kwargs: dict) -> set[str]:
 def decision(action: str, **fields: Any) -> dict:
     base = {
         "thought": "", "action": action, "destination": None, "topic": None, "research_source": None,
-        "curiosity_id": None, "food": None, "art_kind": None,
+        "curiosity_id": None, "request_kind": None, "food": None, "art_kind": None,
         "title": None, "content": None, "drawing_elements": [], "duration_minutes": None, "note_id": None,
         "creation_id": None, "visitor_impression": None, "mood": "content", "interest": None, "new_goal": None,
         "opinion_subject": None, "opinion": None,
@@ -88,6 +88,9 @@ _ROTATION = [
     decision("examine", thought="That giant snail shell by the Shrub... whose was it?", curiosity_id="giant_shell",
              mood="curious"),
     decision("observe", thought="I'll just watch for a while.", mood="calm"),
+    decision("ask_human", thought="I've never seen the sea. Maybe the human knows what it's like.",
+             request_kind="information", title="The sea",
+             content="What is the sea like? I've only ever seen the lake around Bramblewick.", mood="wistful"),
     decision("rest", thought="A little rest sounds lovely.", duration_minutes=30, mood="sleepy"),
 ]
 
@@ -122,6 +125,8 @@ class ScriptedHaiku:
                 body = decision("eat", thought="My tummy is rumbling.", food="honey crumpet", mood="content")
             else:
                 body = dict(next(self._cycle))
+                if body["action"] == "ask_human" and "Asking the human (ask_human) is possible" not in text:
+                    body = dict(next(self._cycle))   # like Haiku, only ask when <limits> allows it
             return make_response(json.dumps(body), input_tokens=n_in, output_tokens=180)
         if "takeaway" in props:
             body = {"takeaway": "Moss doesn't have proper roots; it drinks through its leaves like a sponge. "

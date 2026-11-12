@@ -177,6 +177,19 @@ CREATE TABLE IF NOT EXISTS curiosity_visits(
     visits INTEGER NOT NULL DEFAULT 0,
     last_detail TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS human_requests(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,
+    day TEXT NOT NULL,
+    sim_day INTEGER NOT NULL DEFAULT 1,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    location TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    reply TEXT,
+    replied_at REAL
+);
 CREATE TABLE IF NOT EXISTS outbox(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at REAL NOT NULL,
